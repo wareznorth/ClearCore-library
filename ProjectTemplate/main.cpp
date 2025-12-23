@@ -30,6 +30,7 @@
 
 // Motion limits (steps/second^2).
 #define accelMax 100000
+#define stopDecel 100000
 
 // Timing parameters.
 #define debounceMs 10
@@ -147,7 +148,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             if (Milliseconds() - ctx.stateStartMs >= fastSeekTimeoutMs) {
-                motor.MoveStopDecel(100000);
+                motor.MoveStopDecel(stopDecel);
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             break;
@@ -161,7 +162,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
         case HOMING_BACKOFF_WAIT_STOP:
             // Stop once switch re-asserts (closed) or timeout.
             if (!homeTripped) {
-                motor.MoveStopDecel(100000);
+                motor.MoveStopDecel(stopDecel);
                 if (motor.StepsComplete()) {
                     HomingStateEnter(ctx, HOMING_SLOW_SEEK);
                 }
@@ -172,7 +173,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             if (Milliseconds() - ctx.stateStartMs >= backoffTimeoutMs) {
-                motor.MoveStopDecel(100000);
+                motor.MoveStopDecel(stopDecel);
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             break;
@@ -196,7 +197,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             if (Milliseconds() - ctx.stateStartMs >= slowLatchTimeoutMs) {
-                motor.MoveStopDecel(100000);
+                motor.MoveStopDecel(stopDecel);
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             break;
@@ -278,7 +279,7 @@ int main(void) {
 
         if (!enableRequested && motorEnabled) {
             // Stop any motion before disabling.
-            motor.MoveStopDecel(100000);
+            motor.MoveStopDecel(stopDecel);
             motor.EnableRequest(false);
             motorEnabled = false;
             if (SerialPort) {
