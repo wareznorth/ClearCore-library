@@ -21,9 +21,11 @@
 // Specify which serial to use: ConnectorUsb, ConnectorCOM0, or ConnectorCOM1.
 #define SerialPort ConnectorUsb
 
-// Motion parameters (steps/second and steps).
-#define fastSeekVelocity 20000
-#define slowLatchVelocity 2000
+// Motion parameters (RPM and steps).
+// MSP Input Resolution is set to 800 pulses/rev.
+#define pulsesPerRev 800
+#define fastSeekRpm 1500
+#define slowLatchRpm 150
 #define backoffSteps 2000
 
 // Motion limits (steps/second^2).
@@ -89,6 +91,10 @@ static void HomingStateEnter(HomingContext &ctx, HomingState nextState) {
     ctx.stateStartMs = Milliseconds();
 }
 
+static int32_t RpmToPulsesPerSec(int32_t rpm) {
+    return (rpm * pulsesPerRev) / 60;
+}
+
 static void LogAlertsAndPosition(const char *label) {
     if (!SerialPort) {
         return;
@@ -123,7 +129,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
         case HOMING_FAST_SEEK:
             // Move toward home in the positive direction. The limit switch will
             // command an automatic decel/stop when it de-asserts.
-            motor.MoveVelocity(fastSeekVelocity);
+            motor.MoveVelocity(RpmToPulsesPerSec(fastSeekRpm));
             HomingStateEnter(ctx, HOMING_FAST_WAIT_STOP);
             break;
 
@@ -173,7 +179,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
 
         case HOMING_SLOW_SEEK:
             // Approach the switch slowly for a repeatable stop point.
-            motor.MoveVelocity(slowLatchVelocity);
+            motor.MoveVelocity(RpmToPulsesPerSec(slowLatchRpm));
             HomingStateEnter(ctx, HOMING_SLOW_WAIT_STOP);
             break;
 
@@ -215,7 +221,7 @@ int main(void) {
                           Connector::CPM_MODE_STEP_AND_DIR);
 
     // Set velocity and acceleration limits.
-    motor.VelMax(fastSeekVelocity);
+    motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
     motor.AccelMax(accelMax);
 
     // Associate the positive limit switch with IO-0 (NC input required).
