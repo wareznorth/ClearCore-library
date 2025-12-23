@@ -108,6 +108,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 // Limit switch triggered; wait for stop completion.
                 if (motor.StepsComplete()) {
                     motor.ClearAlerts();
+                    motor.PositionRefSet(0);
                     HomingStateEnter(ctx, HOMING_BACKOFF);
                 }
             }
