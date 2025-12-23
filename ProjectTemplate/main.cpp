@@ -24,7 +24,7 @@
 // Motion parameters (RPM and steps).
 // MSP Input Resolution is set to 800 pulses/rev.
 #define pulsesPerRev 800
-#define fastSeekRpm 1500
+#define fastSeekRpm 3000
 #define slowLatchRpm 150
 #define backoffSteps 2000
 
@@ -33,7 +33,7 @@
 
 // Timing parameters.
 #define debounceMs 10
-#define fastSeekTimeoutMs 8000
+#define fastSeekTimeoutMs 15000
 #define backoffTimeoutMs 3000
 #define slowLatchTimeoutMs 8000
 
@@ -147,7 +147,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             if (Milliseconds() - ctx.stateStartMs >= fastSeekTimeoutMs) {
-                motor.MoveStopDecel();
+                motor.MoveStopDecel(100000);
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             break;
@@ -161,7 +161,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
         case HOMING_BACKOFF_WAIT_STOP:
             // Stop once switch re-asserts (closed) or timeout.
             if (!homeTripped) {
-                motor.MoveStopDecel();
+                motor.MoveStopDecel(100000);
                 if (motor.StepsComplete()) {
                     HomingStateEnter(ctx, HOMING_SLOW_SEEK);
                 }
@@ -172,7 +172,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             if (Milliseconds() - ctx.stateStartMs >= backoffTimeoutMs) {
-                motor.MoveStopDecel();
+                motor.MoveStopDecel(100000);
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             break;
@@ -196,7 +196,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             if (Milliseconds() - ctx.stateStartMs >= slowLatchTimeoutMs) {
-                motor.MoveStopDecel();
+                motor.MoveStopDecel(100000);
                 HomingStateEnter(ctx, HOMING_FAILED);
             }
             break;
@@ -278,7 +278,7 @@ int main(void) {
 
         if (!enableRequested && motorEnabled) {
             // Stop any motion before disabling.
-            motor.MoveStopDecel();
+            motor.MoveStopDecel(100000);
             motor.EnableRequest(false);
             motorEnabled = false;
             if (SerialPort) {
