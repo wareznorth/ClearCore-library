@@ -103,6 +103,9 @@ static void LogAlertsAndPosition(const char *label) {
 
 static void HomeLimitReached(const char *label) {
     LogAlertsAndPosition(label);
+    // Per ClearCore limit switch recovery guidance:
+    // 1) Do not command any further positive motion while the limit alert is set.
+    // 2) Clear alerts before commanding motion in the opposite direction.
     motor.ClearAlerts();
     motor.PositionRefSet(0);
     if (SerialPort) {
