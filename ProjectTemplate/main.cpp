@@ -37,6 +37,7 @@
 #define fastSeekTimeoutMs 15000
 #define backoffTimeoutMs 3000
 #define slowLatchTimeoutMs 8000
+#define revPulseWidthMs 50
 
 // Debounce helper for a digital input.
 struct DebounceInput {
@@ -216,6 +217,12 @@ int main(void) {
     // Configure IO-2 as a digital input for the enable switch.
     ConnectorIO2.Mode(Connector::INPUT_DIGITAL);
 
+    // Configure IO-1 as a digital output (home limit indicator).
+    ConnectorIO1.Mode(Connector::OUTPUT_DIGITAL);
+
+    // Configure IO-3 as a digital output (once-per-rev pulse).
+    ConnectorIO3.Mode(Connector::OUTPUT_DIGITAL);
+
     // Configure motor for Step and Direction mode.
     MotorMgr.MotorInputClocking(MotorManager::CLOCK_RATE_NORMAL);
     MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
@@ -247,10 +254,14 @@ int main(void) {
     DebounceInput homeInput = {ConnectorIO0.State(), ConnectorIO0.State(), Milliseconds()};
     HomingContext homing = {HOMING_IDLE, Milliseconds(), false};
     bool motorEnabled = false;
+    int32_t lastRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
+    uint32_t revPulseStartMs = 0;
+    bool revPulseActive = false;
 
     while (true) {
         bool enableRequested = ReadEnableDebounced(enableInput);
         bool homeTripped = ReadHomeTrippedDebounced(homeInput);
+        int32_t currentRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
 
         if (enableRequested && !motorEnabled) {
             motor.EnableRequest(true);
@@ -286,6 +297,22 @@ int main(void) {
                 SerialPort.SendLine("Enable OFF: motor disabled.");
             }
             HomingStateEnter(homing, HOMING_IDLE);
+        }
+
+        // Update home limit indicator on IO-1.
+        ConnectorIO1.State(homeTripped);
+
+        // Generate a pulse on IO-3 once per revolution.
+        if (currentRevIndex != lastRevIndex) {
+            lastRevIndex = currentRevIndex;
+            revPulseActive = true;
+            revPulseStartMs = Milliseconds();
+            ConnectorIO3.State(true);
+        }
+        if (revPulseActive &&
+            (Milliseconds() - revPulseStartMs >= revPulseWidthMs)) {
+            revPulseActive = false;
+            ConnectorIO3.State(false);
         }
 
         if (motorEnabled) {
