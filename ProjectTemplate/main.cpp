@@ -89,6 +89,28 @@ static void HomingStateEnter(HomingContext &ctx, HomingState nextState) {
     ctx.stateStartMs = Milliseconds();
 }
 
+static void LogAlertsAndPosition(const char *label) {
+    if (!SerialPort) {
+        return;
+    }
+
+    SerialPort.SendLine(label);
+    SerialPort.Send("AlertReg: ");
+    SerialPort.SendLine(motor.AlertReg().reg);
+    SerialPort.Send("PositionRefCommanded: ");
+    SerialPort.SendLine(motor.PositionRefCommanded());
+}
+
+static void HomeLimitReached(const char *label) {
+    LogAlertsAndPosition(label);
+    motor.ClearAlerts();
+    motor.PositionRefSet(0);
+    if (SerialPort) {
+        SerialPort.Send("PositionRefCommanded after zero: ");
+        SerialPort.SendLine(motor.PositionRefCommanded());
+    }
+}
+
 // Advance the homing state machine once per loop iteration.
 static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
     switch (ctx.state) {
@@ -107,8 +129,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
             if (motor.AlertReg().bit.MotionCanceledPositiveLimit) {
                 // Limit switch triggered; wait for stop completion.
                 if (motor.StepsComplete()) {
-                    motor.ClearAlerts();
-                    motor.PositionRefSet(0);
+                    HomeLimitReached("Home limit reached (fast seek).");
                     HomingStateEnter(ctx, HOMING_BACKOFF);
                 }
             }
@@ -156,8 +177,7 @@ static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
         case HOMING_SLOW_WAIT_STOP:
             if (motor.AlertReg().bit.MotionCanceledPositiveLimit) {
                 if (motor.StepsComplete()) {
-                    motor.ClearAlerts();
-                    motor.PositionRefSet(0);
+                    HomeLimitReached("Home limit reached (slow latch).");
                     ctx.homed = true;
                     HomingStateEnter(ctx, HOMING_COMPLETE);
                 }
