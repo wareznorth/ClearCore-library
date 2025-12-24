@@ -1,4 +1,5 @@
 #include "ClearCore.h"
+#include <math.h>
 
 /**
  * Example: Positive-direction homing using IO-0 as a Normally Closed limit switch
@@ -38,6 +39,7 @@
 #define backoffTimeoutMs 3000
 #define slowLatchTimeoutMs 8000
 #define revPulseWidthMs 50
+#define hlfbReportMs 250
 
 // Button-triggered move parameters.
 #define buttonMoveRpm 200
@@ -104,6 +106,46 @@ static void HomingStateEnter(HomingContext &ctx, HomingState nextState) {
 
 static int32_t RpmToPulsesPerSec(int32_t rpm) {
     return (rpm * pulsesPerRev) / 60;
+}
+
+static void ReportHlfbTorque(uint32_t &lastReportMs) {
+    if (!SerialPort) {
+        return;
+    }
+
+    if (Milliseconds() - lastReportMs < hlfbReportMs) {
+        return;
+    }
+
+    lastReportMs = Milliseconds();
+
+    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+    if (hlfbState != MotorDriver::HLFB_HAS_MEASUREMENT) {
+        return;
+    }
+
+    float dutyPercent = motor.HlfbPercent();
+    float torqueScale = 100.0f / 45.0f;
+    int16_t torquePercent = 0;
+    const char *direction = "ZERO";
+
+    if (dutyPercent < 50.0f) {
+        torquePercent = static_cast<int16_t>(round((50.0f - dutyPercent) * torqueScale));
+        direction = "CW";
+    } else if (dutyPercent > 50.0f) {
+        torquePercent = static_cast<int16_t>(round((dutyPercent - 50.0f) * torqueScale));
+        direction = "CCW";
+    }
+
+    if (torquePercent > 100) {
+        torquePercent = 100;
+    }
+
+    SerialPort.Send("HLFB duty: ");
+    SerialPort.Send(int8_t(round(dutyPercent)));
+    SerialPort.Send("%, torque: ");
+    SerialPort.Send(torquePercent);
+    SerialPort.SendLine(direction);
 }
 
 static void LogAlertsAndPosition(const char *label) {
@@ -240,6 +282,10 @@ int main(void) {
     MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
                           Connector::CPM_MODE_STEP_AND_DIR);
 
+    // Configure HLFB for bipolar PWM (ASG with measured torque) at 482 Hz.
+    motor.HlfbMode(MotorDriver::HLFB_MODE_HAS_BIPOLAR_PWM);
+    motor.HlfbCarrier(MotorDriver::HLFB_CARRIER_482_HZ);
+
     // Set velocity and acceleration limits.
     motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
     motor.AccelMax(accelMax);
@@ -272,6 +318,7 @@ int main(void) {
     bool revPulseActive = false;
     ButtonMoveState buttonMoveState = BUTTON_MOVE_IDLE;
     bool buttonPrevState = buttonInput.debouncedState;
+    uint32_t lastHlfbReportMs = 0;
 
     while (true) {
         bool enableRequested = ReadEnableDebounced(enableInput);
@@ -335,6 +382,8 @@ int main(void) {
             revPulseActive = false;
             ConnectorIO3.State(false);
         }
+
+        ReportHlfbTorque(lastHlfbReportMs);
 
         if (motorEnabled) {
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
