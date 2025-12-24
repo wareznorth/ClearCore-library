@@ -41,7 +41,7 @@
 
 // Button-triggered move parameters.
 #define buttonMoveRpm 200
-#define buttonMoveCounts 10000
+#define buttonMoveCounts 256000
 
 // Debounce helper for a digital input.
 struct DebounceInput {
@@ -354,6 +354,20 @@ int main(void) {
                 if (SerialPort) {
                     SerialPort.Send("Button move complete. PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
+                }
+                if (homeTripped) {
+                    motor.PositionRefSet(0);
+                    homing.homed = true;
+                    HomingStateEnter(homing, HOMING_COMPLETE);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                    }
+                } else {
+                    homing.homed = false;
+                    HomingStateEnter(homing, HOMING_FAST_SEEK);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Homing started after button move.");
+                    }
                 }
             }
 
