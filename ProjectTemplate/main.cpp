@@ -299,8 +299,8 @@ int main(void) {
             HomingStateEnter(homing, HOMING_IDLE);
         }
 
-        // Update home limit indicator on IO-1.
-        ConnectorIO1.State(homeTripped);
+        // Update home limit indicator on IO-1 (inverted).
+        ConnectorIO1.State(!homeTripped);
 
         // Generate a pulse on IO-3 once per revolution.
         if (currentRevIndex != lastRevIndex) {
