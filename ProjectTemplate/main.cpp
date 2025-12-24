@@ -29,8 +29,8 @@
 #define backoffSteps 2000
 
 // Motion limits (steps/second^2).
-#define accelMax 100000
-#define stopDecel 100000
+#define accelMax 1066676
+#define stopDecel 1066676
 
 // Timing parameters.
 #define debounceMs 10
