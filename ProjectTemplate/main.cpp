@@ -39,6 +39,10 @@
 #define slowLatchTimeoutMs 8000
 #define revPulseWidthMs 50
 
+// Button-triggered move parameters.
+#define buttonMoveRpm 200
+#define buttonMoveCounts 10000
+
 // Debounce helper for a digital input.
 struct DebounceInput {
     bool rawState;
@@ -80,6 +84,11 @@ enum HomingState {
     HOMING_SLOW_WAIT_STOP,
     HOMING_COMPLETE,
     HOMING_FAILED
+};
+
+enum ButtonMoveState {
+    BUTTON_MOVE_IDLE,
+    BUTTON_MOVE_RUNNING
 };
 
 struct HomingContext {
@@ -217,6 +226,9 @@ int main(void) {
     // Configure IO-2 as a digital input for the enable switch.
     ConnectorIO2.Mode(Connector::INPUT_DIGITAL);
 
+    // Configure IO-4 as a digital input for the button.
+    ConnectorIO4.Mode(Connector::INPUT_DIGITAL);
+
     // Configure IO-1 as a digital output (home limit indicator).
     ConnectorIO1.Mode(Connector::OUTPUT_DIGITAL);
 
@@ -252,16 +264,23 @@ int main(void) {
 
     DebounceInput enableInput = {ConnectorIO2.State(), ConnectorIO2.State(), Milliseconds()};
     DebounceInput homeInput = {ConnectorIO0.State(), ConnectorIO0.State(), Milliseconds()};
+    DebounceInput buttonInput = {ConnectorIO4.State(), ConnectorIO4.State(), Milliseconds()};
     HomingContext homing = {HOMING_IDLE, Milliseconds(), false};
     bool motorEnabled = false;
     int32_t lastRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
     uint32_t revPulseStartMs = 0;
     bool revPulseActive = false;
+    ButtonMoveState buttonMoveState = BUTTON_MOVE_IDLE;
+    bool buttonPrevState = buttonInput.debouncedState;
 
     while (true) {
         bool enableRequested = ReadEnableDebounced(enableInput);
         bool homeTripped = ReadHomeTrippedDebounced(homeInput);
+        DebounceUpdate(buttonInput, ConnectorIO4.State());
+        bool buttonPressed = buttonInput.debouncedState;
         int32_t currentRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
+        bool buttonRisingEdge = buttonPressed && !buttonPrevState;
+        buttonPrevState = buttonPressed;
 
         if (enableRequested && !motorEnabled) {
             motor.EnableRequest(true);
@@ -297,6 +316,8 @@ int main(void) {
                 SerialPort.SendLine("Enable OFF: motor disabled.");
             }
             HomingStateEnter(homing, HOMING_IDLE);
+            buttonMoveState = BUTTON_MOVE_IDLE;
+            motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
         }
 
         // Update home limit indicator on IO-1 (inverted).
@@ -316,6 +337,26 @@ int main(void) {
         }
 
         if (motorEnabled) {
+            if (buttonRisingEdge && homing.state == HOMING_IDLE &&
+                buttonMoveState == BUTTON_MOVE_IDLE) {
+                motor.VelMax(RpmToPulsesPerSec(buttonMoveRpm));
+                motor.Move(-buttonMoveCounts);
+                buttonMoveState = BUTTON_MOVE_RUNNING;
+                if (SerialPort) {
+                    SerialPort.SendLine("Button move started.");
+                }
+            }
+
+            if (buttonMoveState == BUTTON_MOVE_RUNNING &&
+                motor.StepsComplete()) {
+                buttonMoveState = BUTTON_MOVE_IDLE;
+                motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
+                if (SerialPort) {
+                    SerialPort.Send("Button move complete. PositionRefCommanded: ");
+                    SerialPort.SendLine(motor.PositionRefCommanded());
+                }
+            }
+
             HomingUpdate(homing, homeTripped);
 
             if (homing.state == HOMING_COMPLETE) {
