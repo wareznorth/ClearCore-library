@@ -3,10 +3,10 @@
 
 /**
  * Example: Positive-direction homing using IO-0 as a Normally Closed limit switch
- * with an enable switch on IO-2.
+ * with an enable switch on DI-6.
  *
  * Behavior summary:
- * - IO-2 (NC or NO, user-defined) enables/disables the motor with debounce.
+ * - DI-6 (NC or NO, user-defined) enables/disables the motor with debounce.
  * - IO-0 is a Normally Closed (NC) home/limit switch for positive homing.
  * - Homing is a non-blocking state machine.
  * - If the home switch is already tripped when enabling, homing is skipped and
@@ -71,7 +71,7 @@ static bool ReadHomeTrippedDebounced(DebounceInput &homeInput) {
 
 // Read the enable switch with debounce.
 static bool ReadEnableDebounced(DebounceInput &enableInput) {
-    DebounceUpdate(enableInput, ConnectorIO2.State());
+    DebounceUpdate(enableInput, ConnectorDI6.State());
     return enableInput.debouncedState;
 }
 
@@ -265,8 +265,8 @@ int main(void) {
     // Configure IO-0 as a digital input for the NC home/limit switch.
     ConnectorIO0.Mode(Connector::INPUT_DIGITAL);
 
-    // Configure IO-2 as a digital input for the enable switch.
-    ConnectorIO2.Mode(Connector::INPUT_DIGITAL);
+    // Configure DI-6 as a digital input for the enable switch.
+    ConnectorDI6.Mode(Connector::INPUT_DIGITAL);
 
     // Configure IO-4 as a digital input for the button.
     ConnectorIO4.Mode(Connector::INPUT_DIGITAL);
@@ -281,6 +281,9 @@ int main(void) {
     MotorMgr.MotorInputClocking(MotorManager::CLOCK_RATE_NORMAL);
     MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
                           Connector::CPM_MODE_STEP_AND_DIR);
+
+    // Use DI-6 as the motor enable connector.
+    motor.EnableConnector(CLEARCORE_PIN_DI6);
 
     // Configure HLFB for bipolar PWM (ASG with measured torque) at 482 Hz.
     motor.HlfbMode(MotorDriver::HLFB_MODE_HAS_BIPOLAR_PWM);
@@ -308,7 +311,7 @@ int main(void) {
         continue;
     }
 
-    DebounceInput enableInput = {ConnectorIO2.State(), ConnectorIO2.State(), Milliseconds()};
+    DebounceInput enableInput = {ConnectorDI6.State(), ConnectorDI6.State(), Milliseconds()};
     DebounceInput homeInput = {ConnectorIO0.State(), ConnectorIO0.State(), Milliseconds()};
     DebounceInput buttonInput = {ConnectorIO4.State(), ConnectorIO4.State(), Milliseconds()};
     HomingContext homing = {HOMING_IDLE, Milliseconds(), false};
