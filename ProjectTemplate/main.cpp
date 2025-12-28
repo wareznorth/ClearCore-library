@@ -321,6 +321,7 @@ int main(void) {
     uint32_t lastHlfbReportMs = 0;
 
     while (true) {
+        // Sample debounced input states (enable, home, button) and compute edges.
         bool enableRequested = ReadEnableDebounced(enableInput);
         bool homeTripped = ReadHomeTrippedDebounced(homeInput);
         DebounceUpdate(buttonInput, ConnectorIO4.State());
@@ -329,6 +330,8 @@ int main(void) {
         bool buttonRisingEdge = buttonPressed && !buttonPrevState;
         buttonPrevState = buttonPressed;
 
+        // Handle enable switch transitions: enable motor and start/skip homing,
+        // or stop motion and disable immediately when enable is removed.
         if (enableRequested && !motorEnabled) {
             motor.EnableRequest(true);
             motor.ClearAlerts();
@@ -367,6 +370,7 @@ int main(void) {
             motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
         }
 
+        // Update IO indicators and generate the once-per-rev pulse output.
         // Update home limit indicator on IO-1 (inverted).
         ConnectorIO1.State(!homeTripped);
 
@@ -383,9 +387,11 @@ int main(void) {
             ConnectorIO3.State(false);
         }
 
+        // Report HLFB torque measurements at a fixed interval over serial.
         ReportHlfbTorque(lastHlfbReportMs);
 
         if (motorEnabled) {
+            // Start the button move on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
                 buttonMoveState == BUTTON_MOVE_IDLE) {
                 motor.VelMax(RpmToPulsesPerSec(buttonMoveRpm));
@@ -396,6 +402,7 @@ int main(void) {
                 }
             }
 
+            // Detect completion of the button move, log position, and start homing.
             if (buttonMoveState == BUTTON_MOVE_RUNNING &&
                 motor.StepsComplete()) {
                 buttonMoveState = BUTTON_MOVE_IDLE;
@@ -420,6 +427,7 @@ int main(void) {
                 }
             }
 
+            // Advance the non-blocking homing state machine.
             HomingUpdate(homing, homeTripped);
 
             if (homing.state == HOMING_COMPLETE) {
