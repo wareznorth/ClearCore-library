@@ -408,17 +408,17 @@ int main(void) {
         }
 
         if (motorEnabled) {
-            // On first run after power-up, ensure homing occurs if not already on the switch.
+            // On first run after power-up, ensure homing occurs. If the home
+            // switch is already tripped, clear alerts and back off first.
             if (!initialHomingChecked) {
+                motor.ClearAlerts();
+                homing.homed = false;
                 if (homeTripped) {
-                    motor.PositionRefSet(0);
-                    homing.homed = true;
-                    HomingStateEnter(homing, HOMING_COMPLETE);
+                    HomingStateEnter(homing, HOMING_BACKOFF);
                     if (SerialPort) {
-                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                        SerialPort.SendLine("Power-up: home switch tripped, backing off.");
                     }
                 } else {
-                    homing.homed = false;
                     HomingStateEnter(homing, HOMING_FAST_SEEK);
                     if (SerialPort) {
                         SerialPort.SendLine("Homing started at power-up.");
