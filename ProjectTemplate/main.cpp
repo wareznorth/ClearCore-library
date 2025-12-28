@@ -321,6 +321,11 @@ int main(void) {
     uint32_t lastHlfbReportMs = 0;
     bool initialHomingChecked = false;
     bool autoEnabledForHoming = false;
+    // Power-up homing flow:
+    // 1) If enable switch is OFF, auto-enable the motor once.
+    // 2) If home switch is tripped, clear alerts and back off.
+    // 3) Seek toward home (fast then slow latch) to re-trip the limit.
+    // 4) If auto-enabled, disable after homing completes or fails.
 
     while (true) {
         // Sample debounced input states (enable, home, button) and compute edges.
@@ -396,7 +401,7 @@ int main(void) {
         ReportHlfbTorque(lastHlfbReportMs);
 
         if (!initialHomingChecked && !motorEnabled) {
-            // On first run after power-up, enable the motor for homing even if
+            // Power-up step 1: auto-enable the motor to allow homing even if
             // the enable switch is not active.
             motor.EnableRequest(true);
             motor.ClearAlerts();
@@ -408,8 +413,9 @@ int main(void) {
         }
 
         if (motorEnabled) {
-            // On first run after power-up, ensure homing occurs. If the home
-            // switch is already tripped, clear alerts and back off first.
+            // Power-up steps 2-3: decide whether to back off (if already on
+            // the switch) or seek toward home (if not tripped), then run the
+            // homing state machine to re-trip the limit for repeatability.
             if (!initialHomingChecked) {
                 motor.ClearAlerts();
                 homing.homed = false;
