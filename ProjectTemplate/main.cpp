@@ -39,7 +39,7 @@
 #define backoffTimeoutMs 3000
 #define slowLatchTimeoutMs 8000
 #define revPulseWidthMs 50
-#define hlfbReportMs 250
+#define hlfbReportMs 100
 
 // Button-triggered move parameters.
 #define buttonMoveRpm 200
