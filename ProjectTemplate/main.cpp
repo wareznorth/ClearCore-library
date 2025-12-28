@@ -1,12 +1,16 @@
 #include "ClearCore.h"
+#include <math.h>
 
 /**
- * Example: Enable/disable a motor based on a debounced switch on IO-2.
+ * Example: Positive-direction homing using IO-0 as a Normally Closed limit switch
+ * with an enable switch on IO-2.
  *
- * - IO-2 is configured as a digital input.
- * - When the switch is ON (closed), the motor enable is requested.
- * - When the switch is OFF (open), the motor enable is removed.
- * - State changes are printed to USB serial if a terminal is connected.
+ * Behavior summary:
+ * - IO-2 (NC or NO, user-defined) enables/disables the motor with debounce.
+ * - IO-0 is a Normally Closed (NC) home/limit switch for positive homing.
+ * - Homing is a non-blocking state machine.
+ * - If the home switch is already tripped when enabling, homing is skipped and
+ *   position reference is zeroed immediately.
  */
 
 // Make it easy to change which motor connector is used.
@@ -18,12 +22,276 @@
 // Specify which serial to use: ConnectorUsb, ConnectorCOM0, or ConnectorCOM1.
 #define SerialPort ConnectorUsb
 
-// Debounce time (ms) for the IO-2 switch.
-#define debounceMs 50
+// Motion parameters (RPM and steps).
+// MSP Input Resolution is set to 800 pulses/rev.
+#define pulsesPerRev 800
+#define fastSeekRpm 3000
+#define slowLatchRpm 150
+#define backoffSteps 2000
+
+// Motion limits (steps/second^2).
+#define accelMax 1066676
+#define stopDecel 1066676
+
+// Timing parameters.
+#define debounceMs 10
+#define fastSeekTimeoutMs 15000
+#define backoffTimeoutMs 3000
+#define slowLatchTimeoutMs 8000
+#define revPulseWidthMs 50
+#define hlfbReportMs 100
+
+// Button-triggered move parameters.
+#define buttonMoveRpm 200
+#define buttonMoveCounts 256000
+
+// Debounce helper for a digital input.
+struct DebounceInput {
+    bool rawState;
+    bool debouncedState;
+    uint32_t lastChangeTime;
+};
+
+static void DebounceUpdate(DebounceInput &input, bool newRawState) {
+    if (newRawState != input.rawState) {
+        input.rawState = newRawState;
+        input.lastChangeTime = Milliseconds();
+    }
+
+    if ((Milliseconds() - input.lastChangeTime) >= debounceMs) {
+        input.debouncedState = input.rawState;
+    }
+}
+
+// Return true when the home/limit switch is tripped (NC switch opens).
+static bool ReadHomeTrippedDebounced(DebounceInput &homeInput) {
+    DebounceUpdate(homeInput, ConnectorIO0.State());
+    return !homeInput.debouncedState;
+}
+
+// Read the enable switch with debounce.
+static bool ReadEnableDebounced(DebounceInput &enableInput) {
+    DebounceUpdate(enableInput, ConnectorIO2.State());
+    return enableInput.debouncedState;
+}
+
+// Homing state machine.
+enum HomingState {
+    HOMING_IDLE,
+    HOMING_FAST_SEEK,
+    HOMING_FAST_WAIT_STOP,
+    HOMING_BACKOFF,
+    HOMING_BACKOFF_WAIT_STOP,
+    HOMING_SLOW_SEEK,
+    HOMING_SLOW_WAIT_STOP,
+    HOMING_COMPLETE,
+    HOMING_FAILED
+};
+
+enum ButtonMoveState {
+    BUTTON_MOVE_IDLE,
+    BUTTON_MOVE_RUNNING
+};
+
+struct HomingContext {
+    HomingState state;
+    uint32_t stateStartMs;
+    bool homed;
+};
+
+static void HomingStateEnter(HomingContext &ctx, HomingState nextState) {
+    ctx.state = nextState;
+    ctx.stateStartMs = Milliseconds();
+}
+
+static int32_t RpmToPulsesPerSec(int32_t rpm) {
+    return (rpm * pulsesPerRev) / 60;
+}
+
+static void ReportHlfbTorque(uint32_t &lastReportMs) {
+    if (!SerialPort) {
+        return;
+    }
+
+    if (Milliseconds() - lastReportMs < hlfbReportMs) {
+        return;
+    }
+
+    lastReportMs = Milliseconds();
+
+    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+    if (hlfbState != MotorDriver::HLFB_HAS_MEASUREMENT) {
+        return;
+    }
+
+    float dutyPercent = motor.HlfbPercent();
+    float torqueScale = 100.0f / 45.0f;
+    int16_t torquePercent = 0;
+    const char *direction = "ZERO";
+
+    if (dutyPercent < 50.0f) {
+        torquePercent = static_cast<int16_t>(round((50.0f - dutyPercent) * torqueScale));
+        direction = "CW";
+    } else if (dutyPercent > 50.0f) {
+        torquePercent = static_cast<int16_t>(round((dutyPercent - 50.0f) * torqueScale));
+        direction = "CCW";
+    }
+
+    if (torquePercent > 100) {
+        torquePercent = 100;
+    }
+
+    SerialPort.Send("HLFB duty: ");
+    SerialPort.Send(int8_t(round(dutyPercent)));
+    SerialPort.Send("%, torque: ");
+    SerialPort.Send(torquePercent);
+    SerialPort.SendLine(direction);
+}
+
+static void LogAlertsAndPosition(const char *label) {
+    if (!SerialPort) {
+        return;
+    }
+
+    SerialPort.SendLine(label);
+    SerialPort.Send("AlertReg: ");
+    SerialPort.SendLine(motor.AlertReg().reg);
+    SerialPort.Send("PositionRefCommanded: ");
+    SerialPort.SendLine(motor.PositionRefCommanded());
+}
+
+static void HomeLimitReached(const char *label) {
+    LogAlertsAndPosition(label);
+    // Per ClearCore limit switch recovery guidance:
+    // 1) Do not command any further positive motion while the limit alert is set.
+    // 2) Clear alerts before commanding motion in the opposite direction.
+    motor.ClearAlerts();
+    motor.PositionRefSet(0);
+    if (SerialPort) {
+        SerialPort.Send("PositionRefCommanded after zero: ");
+        SerialPort.SendLine(motor.PositionRefCommanded());
+    }
+}
+
+// Advance the homing state machine once per loop iteration.
+static void HomingUpdate(HomingContext &ctx, bool homeTripped) {
+    switch (ctx.state) {
+        case HOMING_IDLE:
+            break;
+
+        case HOMING_FAST_SEEK:
+            // Move toward home in the positive direction. The limit switch will
+            // command an automatic decel/stop when it de-asserts.
+            motor.MoveVelocity(RpmToPulsesPerSec(fastSeekRpm));
+            HomingStateEnter(ctx, HOMING_FAST_WAIT_STOP);
+            break;
+
+        case HOMING_FAST_WAIT_STOP:
+            // Wait for limit to trip and motion to stop.
+            if (motor.AlertReg().bit.MotionCanceledPositiveLimit) {
+                // Limit switch triggered; wait for stop completion.
+                if (motor.StepsComplete()) {
+                    HomeLimitReached("Home limit reached (fast seek).");
+                    HomingStateEnter(ctx, HOMING_BACKOFF);
+                }
+            }
+            if (motor.StatusReg().bit.AlertsPresent &&
+                !motor.AlertReg().bit.MotionCanceledPositiveLimit) {
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            if (Milliseconds() - ctx.stateStartMs >= fastSeekTimeoutMs) {
+                motor.MoveStopDecel(stopDecel);
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            break;
+
+        case HOMING_BACKOFF:
+            // Move away from the switch in negative direction.
+            motor.Move(-backoffSteps);
+            HomingStateEnter(ctx, HOMING_BACKOFF_WAIT_STOP);
+            break;
+
+        case HOMING_BACKOFF_WAIT_STOP:
+            // Stop once switch re-asserts (closed) or timeout.
+            if (!homeTripped) {
+                motor.MoveStopDecel(stopDecel);
+                if (motor.StepsComplete()) {
+                    HomingStateEnter(ctx, HOMING_SLOW_SEEK);
+                }
+            } else if (motor.StepsComplete()) {
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            if (motor.StatusReg().bit.AlertsPresent) {
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            if (Milliseconds() - ctx.stateStartMs >= backoffTimeoutMs) {
+                motor.MoveStopDecel(stopDecel);
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            break;
+
+        case HOMING_SLOW_SEEK:
+            // Approach the switch slowly for a repeatable stop point.
+            motor.MoveVelocity(RpmToPulsesPerSec(slowLatchRpm));
+            HomingStateEnter(ctx, HOMING_SLOW_WAIT_STOP);
+            break;
+
+        case HOMING_SLOW_WAIT_STOP:
+            if (motor.AlertReg().bit.MotionCanceledPositiveLimit) {
+                if (motor.StepsComplete()) {
+                    HomeLimitReached("Home limit reached (slow latch).");
+                    ctx.homed = true;
+                    HomingStateEnter(ctx, HOMING_COMPLETE);
+                }
+            }
+            if (motor.StatusReg().bit.AlertsPresent &&
+                !motor.AlertReg().bit.MotionCanceledPositiveLimit) {
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            if (Milliseconds() - ctx.stateStartMs >= slowLatchTimeoutMs) {
+                motor.MoveStopDecel(stopDecel);
+                HomingStateEnter(ctx, HOMING_FAILED);
+            }
+            break;
+
+        case HOMING_COMPLETE:
+        case HOMING_FAILED:
+            // Stay in terminal state until externally reset.
+            break;
+    }
+}
 
 int main(void) {
-    // Configure IO-2 as a digital input for the switch.
+    // Configure IO-0 as a digital input for the NC home/limit switch.
+    ConnectorIO0.Mode(Connector::INPUT_DIGITAL);
+
+    // Configure IO-2 as a digital input for the enable switch.
     ConnectorIO2.Mode(Connector::INPUT_DIGITAL);
+
+    // Configure IO-4 as a digital input for the button.
+    ConnectorIO4.Mode(Connector::INPUT_DIGITAL);
+
+    // Configure IO-1 as a digital output (home limit indicator).
+    ConnectorIO1.Mode(Connector::OUTPUT_DIGITAL);
+
+    // Configure IO-3 as a digital output (once-per-rev pulse).
+    ConnectorIO3.Mode(Connector::OUTPUT_DIGITAL);
+
+    // Configure motor for Step and Direction mode.
+    MotorMgr.MotorInputClocking(MotorManager::CLOCK_RATE_NORMAL);
+    MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
+                          Connector::CPM_MODE_STEP_AND_DIR);
+
+    // Configure HLFB for bipolar PWM (ASG with measured torque) at 482 Hz.
+    motor.HlfbMode(MotorDriver::HLFB_MODE_HAS_BIPOLAR_PWM);
+    motor.HlfbCarrier(MotorDriver::HLFB_CARRIER_482_HZ);
+
+    // Set velocity and acceleration limits.
+    motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
+    motor.AccelMax(accelMax);
+
+    // Associate the positive limit switch with IO-0 (NC input required).
+    motor.LimitSwitchPos(CLEARCORE_PIN_IO0);
 
     // Ensure motor starts disabled.
     motor.EnableRequest(false);
@@ -33,50 +301,146 @@ int main(void) {
     SerialPort.Speed(baudRate);
     SerialPort.PortOpen();
 
-    // Wait up to 5 seconds for a terminal to connect (non-blocking after timeout).
+    // Wait up to 5 seconds for a terminal to connect.
     const uint32_t timeout = 5000;
     uint32_t startTime = Milliseconds();
     while (!SerialPort && (Milliseconds() - startTime < timeout)) {
         continue;
     }
 
-    // Debounce tracking variables.
-    bool rawState = ConnectorIO2.State();
-    bool debouncedState = rawState;
-    uint32_t lastChangeTime = Milliseconds();
-
-    // Report initial state if serial is open.
-    if (SerialPort) {
-        SerialPort.Send("IO-2 Switch initial state: ");
-        SerialPort.SendLine(debouncedState ? "ON" : "OFF");
-    }
+    DebounceInput enableInput = {ConnectorIO2.State(), ConnectorIO2.State(), Milliseconds()};
+    DebounceInput homeInput = {ConnectorIO0.State(), ConnectorIO0.State(), Milliseconds()};
+    DebounceInput buttonInput = {ConnectorIO4.State(), ConnectorIO4.State(), Milliseconds()};
+    HomingContext homing = {HOMING_IDLE, Milliseconds(), false};
+    bool motorEnabled = false;
+    int32_t lastRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
+    uint32_t revPulseStartMs = 0;
+    bool revPulseActive = false;
+    ButtonMoveState buttonMoveState = BUTTON_MOVE_IDLE;
+    bool buttonPrevState = buttonInput.debouncedState;
+    uint32_t lastHlfbReportMs = 0;
 
     while (true) {
-        // Read the raw switch state.
-        bool newRawState = ConnectorIO2.State();
+        // Sample debounced input states (enable, home, button) and compute edges.
+        bool enableRequested = ReadEnableDebounced(enableInput);
+        bool homeTripped = ReadHomeTrippedDebounced(homeInput);
+        DebounceUpdate(buttonInput, ConnectorIO4.State());
+        bool buttonPressed = buttonInput.debouncedState;
+        int32_t currentRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
+        bool buttonRisingEdge = buttonPressed && !buttonPrevState;
+        buttonPrevState = buttonPressed;
 
-        // If the raw state changes, restart the debounce timer.
-        if (newRawState != rawState) {
-            rawState = newRawState;
-            lastChangeTime = Milliseconds();
-        }
-
-        // If the raw state has been stable long enough, accept it.
-        if ((Milliseconds() - lastChangeTime) >= debounceMs &&
-            debouncedState != rawState) {
-            debouncedState = rawState;
-
-            // Enable or disable the motor based on switch state.
-            motor.EnableRequest(debouncedState);
-
-            // Print state change if a serial terminal is connected.
+        // Handle enable switch transitions: enable motor and start/skip homing,
+        // or stop motion and disable immediately when enable is removed.
+        if (enableRequested && !motorEnabled) {
+            motor.EnableRequest(true);
+            motor.ClearAlerts();
+            motorEnabled = true;
             if (SerialPort) {
-                SerialPort.Send("IO-2 Switch state: ");
-                SerialPort.SendLine(debouncedState ? "ON" : "OFF");
+                SerialPort.SendLine("Enable ON: motor enabled.");
+            }
+
+            // If home switch is already tripped, skip motion and set home.
+            if (homeTripped) {
+                motor.PositionRefSet(0);
+                homing.homed = true;
+                HomingStateEnter(homing, HOMING_COMPLETE);
+                if (SerialPort) {
+                    SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                }
+            } else {
+                homing.homed = false;
+                HomingStateEnter(homing, HOMING_FAST_SEEK);
+                if (SerialPort) {
+                    SerialPort.SendLine("Homing started.");
+                }
             }
         }
 
-        // Short delay to reduce CPU usage.
-        Delay_ms(1);
+        if (!enableRequested && motorEnabled) {
+            // Stop any motion before disabling.
+            motor.MoveStopDecel(stopDecel);
+            motor.EnableRequest(false);
+            motorEnabled = false;
+            if (SerialPort) {
+                SerialPort.SendLine("Enable OFF: motor disabled.");
+            }
+            HomingStateEnter(homing, HOMING_IDLE);
+            buttonMoveState = BUTTON_MOVE_IDLE;
+            motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
+        }
+
+        // Update IO indicators and generate the once-per-rev pulse output.
+        // Update home limit indicator on IO-1 (inverted).
+        ConnectorIO1.State(!homeTripped);
+
+        // Generate a pulse on IO-3 once per revolution.
+        if (currentRevIndex != lastRevIndex) {
+            lastRevIndex = currentRevIndex;
+            revPulseActive = true;
+            revPulseStartMs = Milliseconds();
+            ConnectorIO3.State(true);
+        }
+        if (revPulseActive &&
+            (Milliseconds() - revPulseStartMs >= revPulseWidthMs)) {
+            revPulseActive = false;
+            ConnectorIO3.State(false);
+        }
+
+        // Report HLFB torque measurements at a fixed interval over serial.
+        ReportHlfbTorque(lastHlfbReportMs);
+
+        if (motorEnabled) {
+            // Start the button move on a rising edge when homing is idle.
+            if (buttonRisingEdge && homing.state == HOMING_IDLE &&
+                buttonMoveState == BUTTON_MOVE_IDLE) {
+                motor.VelMax(RpmToPulsesPerSec(buttonMoveRpm));
+                motor.Move(-buttonMoveCounts);
+                buttonMoveState = BUTTON_MOVE_RUNNING;
+                if (SerialPort) {
+                    SerialPort.SendLine("Button move started.");
+                }
+            }
+
+            // Detect completion of the button move, log position, and start homing.
+            if (buttonMoveState == BUTTON_MOVE_RUNNING &&
+                motor.StepsComplete()) {
+                buttonMoveState = BUTTON_MOVE_IDLE;
+                motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
+                if (SerialPort) {
+                    SerialPort.Send("Button move complete. PositionRefCommanded: ");
+                    SerialPort.SendLine(motor.PositionRefCommanded());
+                }
+                if (homeTripped) {
+                    motor.PositionRefSet(0);
+                    homing.homed = true;
+                    HomingStateEnter(homing, HOMING_COMPLETE);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                    }
+                } else {
+                    homing.homed = false;
+                    HomingStateEnter(homing, HOMING_FAST_SEEK);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Homing started after button move.");
+                    }
+                }
+            }
+
+            // Advance the non-blocking homing state machine.
+            HomingUpdate(homing, homeTripped);
+
+            if (homing.state == HOMING_COMPLETE) {
+                if (SerialPort) {
+                    SerialPort.SendLine("Homing complete.");
+                }
+                HomingStateEnter(homing, HOMING_IDLE);
+            } else if (homing.state == HOMING_FAILED) {
+                if (SerialPort) {
+                    SerialPort.SendLine("Homing failed (fault or timeout)." );
+                }
+                HomingStateEnter(homing, HOMING_IDLE);
+            }
+        }
     }
 }
