@@ -263,9 +263,6 @@ int main(void) {
     // Configure IO-0 as a digital input for the NC home/limit switch.
     ConnectorIO0.Mode(Connector::INPUT_DIGITAL);
 
-    // Configure DI-6 as a digital input for the enable switch.
-    ConnectorDI6.Mode(Connector::INPUT_DIGITAL);
-
     // Configure IO-4 as a digital input for the button.
     ConnectorIO4.Mode(Connector::INPUT_DIGITAL);
 
@@ -279,9 +276,6 @@ int main(void) {
     MotorMgr.MotorInputClocking(MotorManager::CLOCK_RATE_NORMAL);
     MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
                           Connector::CPM_MODE_STEP_AND_DIR);
-
-    // Use DI-6 as the motor enable connector.
-    motor.EnableConnector(CLEARCORE_PIN_DI6);
 
     // Configure HLFB for bipolar PWM (ASG with measured torque) at 482 Hz.
     motor.HlfbMode(MotorDriver::HLFB_MODE_HAS_BIPOLAR_PWM);
@@ -309,7 +303,6 @@ int main(void) {
         continue;
     }
 
-    DebounceInput enableInput = {ConnectorDI6.State(), ConnectorDI6.State(), Milliseconds()};
     DebounceInput homeInput = {ConnectorIO0.State(), ConnectorIO0.State(), Milliseconds()};
     DebounceInput buttonInput = {ConnectorIO4.State(), ConnectorIO4.State(), Milliseconds()};
     HomingContext homing = {HOMING_IDLE, Milliseconds(), false};
@@ -320,18 +313,58 @@ int main(void) {
     ButtonMoveState buttonMoveState = BUTTON_MOVE_IDLE;
     bool buttonPrevState = buttonInput.debouncedState;
     uint32_t lastHlfbReportMs = 0;
-    bool initialHomingChecked = false;
-    bool autoEnabledForHoming = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
     // 3) Seek toward home (fast then slow latch) to re-trip the limit.
-    // 4) If auto-enabled, disable after homing completes or fails.
+    // 4) Disable after homing completes or fails.
+
+    // Power-up homing runs before DI-6 is configured.
+    motor.EnableRequest(true);
+    motor.ClearAlerts();
+    motorEnabled = true;
+    if (SerialPort) {
+        SerialPort.SendLine("Power-up homing: motor enabled.");
+    }
+
+    bool homeTripped = ReadHomeTrippedDebounced(homeInput);
+    if (homeTripped) {
+        HomingStateEnter(homing, HOMING_BACKOFF);
+        if (SerialPort) {
+            SerialPort.SendLine("Power-up: home switch tripped, backing off.");
+        }
+    } else {
+        HomingStateEnter(homing, HOMING_FAST_SEEK);
+        if (SerialPort) {
+            SerialPort.SendLine("Homing started at power-up.");
+        }
+    }
+
+    while (homing.state != HOMING_COMPLETE && homing.state != HOMING_FAILED) {
+        homeTripped = ReadHomeTrippedDebounced(homeInput);
+        HomingUpdate(homing, homeTripped);
+    }
+
+    if (SerialPort) {
+        SerialPort.SendLine(homing.state == HOMING_COMPLETE ?
+                            "Power-up homing complete." :
+                            "Power-up homing failed.");
+    }
+
+    motor.MoveStopDecel(stopDecel);
+    motor.EnableRequest(false);
+    motorEnabled = false;
+
+    // Configure DI-6 as a digital input for the enable switch.
+    ConnectorDI6.Mode(Connector::INPUT_DIGITAL);
+    // Use DI-6 as the motor enable connector.
+    motor.EnableConnector(CLEARCORE_PIN_DI6);
+    DebounceInput enableInput = {ConnectorDI6.State(), ConnectorDI6.State(), Milliseconds()};
 
     while (true) {
         // Sample debounced input states (enable, home, button) and compute edges.
         bool enableRequested = ReadEnableDebounced(enableInput);
-        bool homeTripped = ReadHomeTrippedDebounced(homeInput);
+        homeTripped = ReadHomeTrippedDebounced(homeInput);
         DebounceUpdate(buttonInput, ConnectorIO4.State());
         bool buttonPressed = buttonInput.debouncedState;
         int32_t currentRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
@@ -344,7 +377,6 @@ int main(void) {
             motor.EnableRequest(true);
             motor.ClearAlerts();
             motorEnabled = true;
-            autoEnabledForHoming = false;
             if (SerialPort) {
                 SerialPort.SendLine("Enable ON: motor enabled.");
             }
@@ -364,7 +396,6 @@ int main(void) {
                     SerialPort.SendLine("Homing started.");
                 }
             }
-            initialHomingChecked = true;
         }
 
         if (!enableRequested && motorEnabled) {
@@ -372,7 +403,6 @@ int main(void) {
             motor.MoveStopDecel(stopDecel);
             motor.EnableRequest(false);
             motorEnabled = false;
-            autoEnabledForHoming = false;
             if (SerialPort) {
                 SerialPort.SendLine("Enable OFF: motor disabled.");
             }
@@ -401,39 +431,7 @@ int main(void) {
         // Report HLFB torque measurements at a fixed interval over serial.
         ReportHlfbTorque(lastHlfbReportMs);
 
-        if (!initialHomingChecked && !motorEnabled) {
-            // Power-up step 1: auto-enable the motor to allow homing even if
-            // the enable switch is not active.
-            motor.EnableRequest(true);
-            motor.ClearAlerts();
-            motorEnabled = true;
-            autoEnabledForHoming = true;
-            if (SerialPort) {
-                SerialPort.SendLine("Power-up homing: motor enabled.");
-            }
-        }
-
         if (motorEnabled) {
-            // Power-up steps 2-3: decide whether to back off (if already on
-            // the switch) or seek toward home (if not tripped), then run the
-            // homing state machine to re-trip the limit for repeatability.
-            if (!initialHomingChecked) {
-                motor.ClearAlerts();
-                homing.homed = false;
-                if (homeTripped) {
-                    HomingStateEnter(homing, HOMING_BACKOFF);
-                    if (SerialPort) {
-                        SerialPort.SendLine("Power-up: home switch tripped, backing off.");
-                    }
-                } else {
-                    HomingStateEnter(homing, HOMING_FAST_SEEK);
-                    if (SerialPort) {
-                        SerialPort.SendLine("Homing started at power-up.");
-                    }
-                }
-                initialHomingChecked = true;
-            }
-
             // Start the button move on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
                 buttonMoveState == BUTTON_MOVE_IDLE) {
@@ -477,28 +475,10 @@ int main(void) {
                 if (SerialPort) {
                     SerialPort.SendLine("Homing complete.");
                 }
-                if (!enableRequested && autoEnabledForHoming) {
-                    motor.MoveStopDecel(stopDecel);
-                    motor.EnableRequest(false);
-                    motorEnabled = false;
-                    autoEnabledForHoming = false;
-                    if (SerialPort) {
-                        SerialPort.SendLine("Power-up homing done: motor disabled.");
-                    }
-                }
                 HomingStateEnter(homing, HOMING_IDLE);
             } else if (homing.state == HOMING_FAILED) {
                 if (SerialPort) {
                     SerialPort.SendLine("Homing failed (fault or timeout)." );
-                }
-                if (!enableRequested && autoEnabledForHoming) {
-                    motor.MoveStopDecel(stopDecel);
-                    motor.EnableRequest(false);
-                    motorEnabled = false;
-                    autoEnabledForHoming = false;
-                    if (SerialPort) {
-                        SerialPort.SendLine("Power-up homing failed: motor disabled.");
-                    }
                 }
                 HomingStateEnter(homing, HOMING_IDLE);
             }
