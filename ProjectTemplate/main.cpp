@@ -109,15 +109,6 @@ static int32_t RpmToPulsesPerSec(int32_t rpm) {
     return (rpm * pulsesPerRev) / 60;
 }
 
-static bool ReadHlfbDuty(float &dutyPercent) {
-    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
-    if (hlfbState != MotorDriver::HLFB_HAS_MEASUREMENT) {
-        return false;
-    }
-    dutyPercent = motor.HlfbPercent();
-    return true;
-}
-
 static void ReportHlfbTorque(uint32_t &lastReportMs) {
     if (!SerialPort) {
         return;
@@ -129,34 +120,13 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
 
     lastReportMs = Milliseconds();
 
-    float dutyPercent = 0.0f;
-    if (!ReadHlfbDuty(dutyPercent)) {
-        return;
+    // Write the HLFB state to the serial port
+    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+    if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
+        // Writes the torque measured, as a percent of motor peak torque rating
+        SerialPort.Send(int8_t(round(motor.HlfbPercent())));
+        SerialPort.SendLine("% torque");
     }
-
-    const char *direction = "ZERO";
-
-    // HLFB ASG-Position w/ Measured Torque behavior (bipolar PWM @ 482 Hz):
-    // - When enabled and not shutdown, HLFB asserts for Move Done.
-    // - While moving or out of the in-range window, HLFB outputs PWM:
-    //   5% duty = 100% peak torque, CW direction
-    //   50% duty = zero torque
-    //   95% duty = 100% peak torque, CCW direction
-    // - HLFB de-asserts (0% duty) when disabled or shutdown.
-    if (dutyPercent <= 1.0f) {
-        direction = "OFF";
-    } else if (dutyPercent >= 99.0f) {
-        direction = "ASSERTED";
-    } else if (dutyPercent < 50.0f) {
-        direction = "CW";
-    } else if (dutyPercent > 50.0f) {
-        direction = "CCW";
-    }
-
-    SerialPort.Send("HLFB duty: ");
-    SerialPort.Send(int8_t(round(dutyPercent)));
-    SerialPort.Send("% ");
-    SerialPort.SendLine(direction);
 }
 
 static void LogAlertsAndPosition(const char *label) {
