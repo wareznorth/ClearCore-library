@@ -127,6 +127,15 @@ static bool ReadHlfbTorque(float &torquePercent, float &dutyPercent) {
     return true;
 }
 
+static bool ReadHlfbDuty(float &dutyPercent) {
+    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+    if (hlfbState != MotorDriver::HLFB_HAS_MEASUREMENT) {
+        return false;
+    }
+    dutyPercent = motor.HlfbPercent();
+    return true;
+}
+
 static void ReportHlfbTorque(uint32_t &lastReportMs) {
     if (!SerialPort) {
         return;
@@ -139,8 +148,7 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
     lastReportMs = Milliseconds();
 
     float dutyPercent = 0.0f;
-    float torquePercent = 0.0f;
-    if (!ReadHlfbTorque(torquePercent, dutyPercent)) {
+    if (!ReadHlfbDuty(dutyPercent)) {
         return;
     }
 
@@ -159,8 +167,8 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
         direction = "CCW";
     }
 
-    SerialPort.Send("Torque (HLFB duty): ");
-    SerialPort.Send(int8_t(round(torquePercent)));
+    SerialPort.Send("HLFB duty: ");
+    SerialPort.Send(int8_t(round(dutyPercent)));
     SerialPort.Send("% ");
     SerialPort.SendLine(direction);
 }
