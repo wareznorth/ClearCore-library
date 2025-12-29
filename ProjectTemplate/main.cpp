@@ -129,6 +129,10 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
     int16_t torquePercent = 0;
     const char *direction = "ZERO";
 
+    // HLFB measured torque mapping (bipolar PWM @ 482 Hz):
+    // 5% duty = 100% peak torque, CW direction
+    // 50% duty = zero torque
+    // 95% duty = 100% peak torque, CCW direction
     if (dutyPercent < 50.0f) {
         torquePercent = static_cast<int16_t>(round((50.0f - dutyPercent) * torqueScale));
         direction = "CW";
@@ -277,7 +281,7 @@ int main(void) {
     MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
                           Connector::CPM_MODE_STEP_AND_DIR);
 
-    // Configure HLFB for bipolar PWM (ASG with measured torque) at 482 Hz.
+// Configure HLFB for bipolar PWM measured torque at 482 Hz.
     motor.HlfbMode(MotorDriver::HLFB_MODE_HAS_BIPOLAR_PWM);
     motor.HlfbCarrier(MotorDriver::HLFB_CARRIER_482_HZ);
 
