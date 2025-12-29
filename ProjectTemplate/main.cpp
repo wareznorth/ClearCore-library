@@ -143,7 +143,11 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
     //   50% duty = zero torque
     //   95% duty = 100% peak torque, CCW direction
     // - HLFB de-asserts (0% duty) when disabled or shutdown.
-    if (dutyPercent < 50.0f) {
+    if (dutyPercent <= 1.0f) {
+        direction = "OFF";
+    } else if (dutyPercent >= 99.0f) {
+        direction = "ASSERTED";
+    } else if (dutyPercent < 50.0f) {
         direction = "CW";
     } else if (dutyPercent > 50.0f) {
         direction = "CCW";
