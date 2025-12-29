@@ -141,9 +141,7 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
         torquePercent = 100;
     }
 
-    SerialPort.Send("HLFB duty: ");
-    SerialPort.Send(int8_t(round(dutyPercent)));
-    SerialPort.Send("%, torque: ");
+    SerialPort.Send("Torque: ");
     SerialPort.Send(torquePercent);
     SerialPort.SendLine(direction);
 }
