@@ -41,9 +41,9 @@
 #define revPulseWidthMs 50
 #define hlfbReportMs 100
 
-// Button-triggered move parameters.
-#define buttonMoveRpm 200
-#define buttonMoveCounts 256000
+// Buttonfullmov parameters.
+#define buttonFullmovRpm 200
+#define buttonFullmovCounts 256000
 
 // Torque monitoring thresholds (percent).
 #define maxTorquePercent -60.0f
@@ -92,9 +92,9 @@ enum HomingState {
     HOMING_FAILED
 };
 
-enum ButtonMoveState {
-    BUTTON_MOVE_IDLE,
-    BUTTON_MOVE_RUNNING
+enum ButtonfullmovState {
+    BUTTONFULLMOV_IDLE,
+    BUTTONFULLMOV_RUNNING
 };
 
 struct HomingContext {
@@ -328,7 +328,7 @@ int main(void) {
     int32_t lastRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
     uint32_t revPulseStartMs = 0;
     bool revPulseActive = false;
-    ButtonMoveState buttonMoveState = BUTTON_MOVE_IDLE;
+    ButtonfullmovState buttonFullmovState = BUTTONFULLMOV_IDLE;
     bool buttonPrevState = buttonInput.debouncedState;
     uint32_t lastHlfbReportMs = 0;
     // Power-up homing flow:
@@ -425,7 +425,7 @@ int main(void) {
                 SerialPort.SendLine("Enable OFF: motor disabled.");
             }
             HomingStateEnter(homing, HOMING_IDLE);
-            buttonMoveState = BUTTON_MOVE_IDLE;
+            buttonFullmovState = BUTTONFULLMOV_IDLE;
             motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
         }
 
@@ -450,25 +450,25 @@ int main(void) {
         ReportHlfbTorque(lastHlfbReportMs);
 
         if (motorEnabled) {
-            // Start the button move on a rising edge when homing is idle.
+            // Start the Buttonfullmov on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
-                buttonMoveState == BUTTON_MOVE_IDLE) {
-                motor.VelMax(RpmToPulsesPerSec(buttonMoveRpm));
-                motor.Move(-buttonMoveCounts);
-                buttonMoveState = BUTTON_MOVE_RUNNING;
+                buttonFullmovState == BUTTONFULLMOV_IDLE) {
+                motor.VelMax(RpmToPulsesPerSec(buttonFullmovRpm));
+                motor.Move(-buttonFullmovCounts);
+                buttonFullmovState = BUTTONFULLMOV_RUNNING;
                 if (SerialPort) {
-                    SerialPort.SendLine("Button move started.");
+                    SerialPort.SendLine("Buttonfullmov started.");
                 }
             }
 
-            // Apply torque limit checks only during the button move.
-            if (buttonMoveState == BUTTON_MOVE_RUNNING) {
+            // Apply torque limit checks only during the Buttonfullmov.
+            if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                 float dutyPercent = 0.0f;
                 float torquePercent = 0.0f;
                 if (ReadHlfbTorque(torquePercent, dutyPercent) &&
                     torquePercent <= maxTorquePercent) {
                     motor.MoveStopDecel(stopDecel);
-                    buttonMoveState = BUTTON_MOVE_IDLE;
+                    buttonFullmovState = BUTTONFULLMOV_IDLE;
                     if (SerialPort) {
                         SerialPort.Send("Max torque reached. Motor stopped at position: ");
                         SerialPort.SendLine(motor.PositionRefCommanded());
@@ -476,13 +476,13 @@ int main(void) {
                 }
             }
 
-            // Detect completion of the button move, log position, and start homing.
-            if (buttonMoveState == BUTTON_MOVE_RUNNING &&
+            // Detect completion of the Buttonfullmov, log position, and start homing.
+            if (buttonFullmovState == BUTTONFULLMOV_RUNNING &&
                 motor.StepsComplete()) {
-                buttonMoveState = BUTTON_MOVE_IDLE;
+                buttonFullmovState = BUTTONFULLMOV_IDLE;
                 motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
                 if (SerialPort) {
-                    SerialPort.Send("Button move complete. PositionRefCommanded: ");
+                    SerialPort.Send("Buttonfullmov complete. PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
                 }
                 if (homeTripped) {
@@ -496,7 +496,7 @@ int main(void) {
                     homing.homed = false;
                     HomingStateEnter(homing, HOMING_FAST_SEEK);
                     if (SerialPort) {
-                        SerialPort.SendLine("Homing started after button move.");
+                        SerialPort.SendLine("Homing started after Buttonfullmov.");
                     }
                 }
             }
