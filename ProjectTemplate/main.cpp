@@ -331,7 +331,6 @@ int main(void) {
     ButtonMoveState buttonMoveState = BUTTON_MOVE_IDLE;
     bool buttonPrevState = buttonInput.debouncedState;
     uint32_t lastHlfbReportMs = 0;
-    bool torqueStopActive = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -362,20 +361,6 @@ int main(void) {
     while (homing.state != HOMING_COMPLETE && homing.state != HOMING_FAILED) {
         homeTripped = ReadHomeTrippedDebounced(homeInput);
         HomingUpdate(homing, homeTripped);
-
-        float dutyPercent = 0.0f;
-        float torquePercent = 0.0f;
-        if (!torqueStopActive &&
-            ReadHlfbTorque(torquePercent, dutyPercent) &&
-            torquePercent <= maxTorquePercent) {
-            motor.MoveStopDecel(stopDecel);
-            torqueStopActive = true;
-            HomingStateEnter(homing, HOMING_FAILED);
-            if (SerialPort) {
-                SerialPort.Send("Max torque reached. Motor stopped at position: ");
-                SerialPort.SendLine(motor.PositionRefCommanded());
-            }
-        }
     }
 
     if (SerialPort) {
@@ -387,7 +372,6 @@ int main(void) {
     motor.MoveStopDecel(stopDecel);
     motor.EnableRequest(false);
     motorEnabled = false;
-    torqueStopActive = false;
 
     // Configure DI-6 as a digital input for the enable switch.
     ConnectorDI6.Mode(Connector::INPUT_DIGITAL);
@@ -443,7 +427,6 @@ int main(void) {
             HomingStateEnter(homing, HOMING_IDLE);
             buttonMoveState = BUTTON_MOVE_IDLE;
             motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
-            torqueStopActive = false;
         }
 
         // Update IO indicators and generate the once-per-rev pulse output.
@@ -467,25 +450,6 @@ int main(void) {
         ReportHlfbTorque(lastHlfbReportMs);
 
         if (motorEnabled) {
-            float dutyPercent = 0.0f;
-            float torquePercent = 0.0f;
-            if (!torqueStopActive &&
-                ReadHlfbTorque(torquePercent, dutyPercent) &&
-                torquePercent <= maxTorquePercent) {
-                motor.MoveStopDecel(stopDecel);
-                torqueStopActive = true;
-                HomingStateEnter(homing, HOMING_FAILED);
-                buttonMoveState = BUTTON_MOVE_IDLE;
-                if (SerialPort) {
-                    SerialPort.Send("Max torque reached. Motor stopped at position: ");
-                    SerialPort.SendLine(motor.PositionRefCommanded());
-                }
-            }
-
-            if (torqueStopActive) {
-                continue;
-            }
-
             // Start the button move on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
                 buttonMoveState == BUTTON_MOVE_IDLE) {
@@ -494,6 +458,21 @@ int main(void) {
                 buttonMoveState = BUTTON_MOVE_RUNNING;
                 if (SerialPort) {
                     SerialPort.SendLine("Button move started.");
+                }
+            }
+
+            // Apply torque limit checks only during the button move.
+            if (buttonMoveState == BUTTON_MOVE_RUNNING) {
+                float dutyPercent = 0.0f;
+                float torquePercent = 0.0f;
+                if (ReadHlfbTorque(torquePercent, dutyPercent) &&
+                    torquePercent <= maxTorquePercent) {
+                    motor.MoveStopDecel(stopDecel);
+                    buttonMoveState = BUTTON_MOVE_IDLE;
+                    if (SerialPort) {
+                        SerialPort.Send("Max torque reached. Motor stopped at position: ");
+                        SerialPort.SendLine(motor.PositionRefCommanded());
+                    }
                 }
             }
 
