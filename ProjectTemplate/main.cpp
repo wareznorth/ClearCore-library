@@ -44,6 +44,7 @@
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
 #define buttonFullmovCounts 256000
+#define buttonFullmovTorqueDelayMs 500
 
 // Torque monitoring thresholds (percent).
 #define maxTorquePercent -60.0f
@@ -329,6 +330,7 @@ int main(void) {
     uint32_t revPulseStartMs = 0;
     bool revPulseActive = false;
     ButtonfullmovState buttonFullmovState = BUTTONFULLMOV_IDLE;
+    uint32_t buttonFullmovStartMs = 0;
     bool buttonPrevState = buttonInput.debouncedState;
     uint32_t lastHlfbReportMs = 0;
     // Power-up homing flow:
@@ -456,6 +458,7 @@ int main(void) {
                 motor.VelMax(RpmToPulsesPerSec(buttonFullmovRpm));
                 motor.Move(-buttonFullmovCounts);
                 buttonFullmovState = BUTTONFULLMOV_RUNNING;
+                buttonFullmovStartMs = Milliseconds();
                 if (SerialPort) {
                     SerialPort.SendLine("Buttonfullmov started.");
                 }
@@ -463,15 +466,18 @@ int main(void) {
 
             // Apply torque limit checks only during the Buttonfullmov.
             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                float dutyPercent = 0.0f;
-                float torquePercent = 0.0f;
-                if (ReadHlfbTorque(torquePercent, dutyPercent) &&
-                    torquePercent <= maxTorquePercent) {
-                    motor.MoveStopDecel(stopDecel);
-                    buttonFullmovState = BUTTONFULLMOV_IDLE;
-                    if (SerialPort) {
-                        SerialPort.Send("Max torque reached. Motor stopped at position: ");
-                        SerialPort.SendLine(motor.PositionRefCommanded());
+                if (Milliseconds() - buttonFullmovStartMs >=
+                    buttonFullmovTorqueDelayMs) {
+                    float dutyPercent = 0.0f;
+                    float torquePercent = 0.0f;
+                    if (ReadHlfbTorque(torquePercent, dutyPercent) &&
+                        torquePercent <= maxTorquePercent) {
+                        motor.MoveStopDecel(stopDecel);
+                        buttonFullmovState = BUTTONFULLMOV_IDLE;
+                        if (SerialPort) {
+                            SerialPort.Send("Max torque reached. Motor stopped at position: ");
+                            SerialPort.SendLine(motor.PositionRefCommanded());
+                        }
                     }
                 }
             }
