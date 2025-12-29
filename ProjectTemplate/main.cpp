@@ -44,11 +44,7 @@
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
 #define buttonFullmovCounts 256000
-#define buttonFullmovTorqueDelayMs 500
 
-// Torque monitoring thresholds (percent).
-#define maxTorquePercent -60.0f
-#define minTorquePercent -20.0f
 
 // Debounce helper for a digital input.
 struct DebounceInput {
@@ -111,20 +107,6 @@ static void HomingStateEnter(HomingContext &ctx, HomingState nextState) {
 
 static int32_t RpmToPulsesPerSec(int32_t rpm) {
     return (rpm * pulsesPerRev) / 60;
-}
-
-static bool ReadHlfbTorque(float &torquePercent, float &dutyPercent) {
-    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
-    if (hlfbState != MotorDriver::HLFB_HAS_MEASUREMENT) {
-        return false;
-    }
-
-    dutyPercent = motor.HlfbPercent();
-
-    // Map HLFB duty cycle to torque percentage:
-    // 5% duty = -100% (CW), 50% = 0%, 95% = +100% (CCW).
-    torquePercent = (dutyPercent - 50.0f) * (100.0f / 45.0f);
-    return true;
 }
 
 static bool ReadHlfbDuty(float &dutyPercent) {
@@ -338,7 +320,6 @@ int main(void) {
     uint32_t revPulseStartMs = 0;
     bool revPulseActive = false;
     ButtonfullmovState buttonFullmovState = BUTTONFULLMOV_IDLE;
-    uint32_t buttonFullmovStartMs = 0;
     bool buttonPrevState = buttonInput.debouncedState;
     uint32_t lastHlfbReportMs = 0;
     // Power-up homing flow:
@@ -466,27 +447,8 @@ int main(void) {
                 motor.VelMax(RpmToPulsesPerSec(buttonFullmovRpm));
                 motor.Move(-buttonFullmovCounts);
                 buttonFullmovState = BUTTONFULLMOV_RUNNING;
-                buttonFullmovStartMs = Milliseconds();
                 if (SerialPort) {
                     SerialPort.SendLine("Buttonfullmov started.");
-                }
-            }
-
-            // Apply torque limit checks only during the Buttonfullmov.
-            if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                if (Milliseconds() - buttonFullmovStartMs >=
-                    buttonFullmovTorqueDelayMs) {
-                    float dutyPercent = 0.0f;
-                    float torquePercent = 0.0f;
-                    if (ReadHlfbTorque(torquePercent, dutyPercent) &&
-                        torquePercent <= maxTorquePercent) {
-                        motor.MoveStopDecel(stopDecel);
-                        buttonFullmovState = BUTTONFULLMOV_IDLE;
-                        if (SerialPort) {
-                            SerialPort.Send("Max torque reached. Motor stopped at position: ");
-                            SerialPort.SendLine(motor.PositionRefCommanded());
-                        }
-                    }
                 }
             }
 
