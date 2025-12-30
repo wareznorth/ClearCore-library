@@ -493,8 +493,10 @@ int main(void) {
                     lastTorqueRegMs = Milliseconds();
                     MotorDriver::HlfbStates hlfbState = motor.HlfbState();
                     if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
-                        float measuredPercent = motor.HlfbPercent();
-                        float error = torqueTargetPercent - measuredPercent;
+                        float measuredDuty = motor.HlfbPercent();
+                        float measuredTorque =
+                            (measuredDuty - 50.0f) * (100.0f / 45.0f);
+                        float error = torqueTargetPercent - measuredTorque;
                         if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                             buttonFullmovRpmCommand +=
                                 error * torqueRegGainRpmPerPercent;
@@ -509,7 +511,7 @@ int main(void) {
                             if (SerialPort) {
                                 SerialPort.Send("Torque error: ");
                                 SerialPort.Send(int8_t(round(error)));
-                                SerialPort.Send("%, Buttonfullmov RPM cmd: ");
+                                SerialPort.Send("% (mapped), Buttonfullmov RPM cmd: ");
                                 SerialPort.SendLine(
                                     static_cast<int32_t>(buttonFullmovRpmCommand));
                             }
@@ -527,7 +529,7 @@ int main(void) {
                             if (SerialPort) {
                                 SerialPort.Send("Torque error: ");
                                 SerialPort.Send(int8_t(round(error)));
-                                SerialPort.Send("%, ButtonHalfmov RPM cmd: ");
+                                SerialPort.Send("% (mapped), ButtonHalfmov RPM cmd: ");
                                 SerialPort.SendLine(
                                     static_cast<int32_t>(buttonHalfmovRpmCommand));
                             }
