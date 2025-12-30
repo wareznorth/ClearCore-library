@@ -45,6 +45,10 @@
 #define buttonFullmovRpm 200
 #define buttonFullmovCounts 256000
 
+// ButtonHalfmov parameters.
+#define buttonHalfmovRpm 200
+#define buttonHalfmovCounts 128000
+
 
 // Debounce helper for a digital input.
 struct DebounceInput {
@@ -92,6 +96,11 @@ enum HomingState {
 enum ButtonfullmovState {
     BUTTONFULLMOV_IDLE,
     BUTTONFULLMOV_RUNNING
+};
+
+enum ButtonHalfmovState {
+    BUTTONHALFMOV_IDLE,
+    BUTTONHALFMOV_RUNNING
 };
 
 struct HomingContext {
@@ -249,6 +258,9 @@ int main(void) {
     // Configure IO-4 as a digital input for the button.
     ConnectorIO4.Mode(Connector::INPUT_DIGITAL);
 
+    // Configure IO-2 as a digital input for the half-move button.
+    ConnectorIO2.Mode(Connector::INPUT_DIGITAL);
+
     // Configure IO-1 as a digital output (home limit indicator).
     ConnectorIO1.Mode(Connector::OUTPUT_DIGITAL);
 
@@ -288,13 +300,16 @@ int main(void) {
 
     DebounceInput homeInput = {ConnectorIO0.State(), ConnectorIO0.State(), Milliseconds()};
     DebounceInput buttonInput = {ConnectorIO4.State(), ConnectorIO4.State(), Milliseconds()};
+    DebounceInput buttonHalfInput = {ConnectorIO2.State(), ConnectorIO2.State(), Milliseconds()};
     HomingContext homing = {HOMING_IDLE, Milliseconds(), false};
     bool motorEnabled = false;
     int32_t lastRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
     uint32_t revPulseStartMs = 0;
     bool revPulseActive = false;
     ButtonfullmovState buttonFullmovState = BUTTONFULLMOV_IDLE;
+    ButtonHalfmovState buttonHalfmovState = BUTTONHALFMOV_IDLE;
     bool buttonPrevState = buttonInput.debouncedState;
+    bool buttonHalfPrevState = buttonHalfInput.debouncedState;
     uint32_t lastHlfbReportMs = 0;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
@@ -349,10 +364,14 @@ int main(void) {
         bool enableRequested = ReadEnableDebounced(enableInput);
         homeTripped = ReadHomeTrippedDebounced(homeInput);
         DebounceUpdate(buttonInput, ConnectorIO4.State());
+        DebounceUpdate(buttonHalfInput, ConnectorIO2.State());
         bool buttonPressed = buttonInput.debouncedState;
+        bool buttonHalfPressed = buttonHalfInput.debouncedState;
         int32_t currentRevIndex = motor.PositionRefCommanded() / pulsesPerRev;
         bool buttonRisingEdge = buttonPressed && !buttonPrevState;
+        bool buttonHalfRisingEdge = buttonHalfPressed && !buttonHalfPrevState;
         buttonPrevState = buttonPressed;
+        buttonHalfPrevState = buttonHalfPressed;
 
         // Handle enable switch transitions: enable motor and start/skip homing,
         // or stop motion and disable immediately when enable is removed.
@@ -391,6 +410,7 @@ int main(void) {
             }
             HomingStateEnter(homing, HOMING_IDLE);
             buttonFullmovState = BUTTONFULLMOV_IDLE;
+            buttonHalfmovState = BUTTONHALFMOV_IDLE;
             motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
         }
 
@@ -417,12 +437,25 @@ int main(void) {
         if (motorEnabled) {
             // Start the Buttonfullmov on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
-                buttonFullmovState == BUTTONFULLMOV_IDLE) {
+                buttonFullmovState == BUTTONFULLMOV_IDLE &&
+                buttonHalfmovState == BUTTONHALFMOV_IDLE) {
                 motor.VelMax(RpmToPulsesPerSec(buttonFullmovRpm));
                 motor.Move(-buttonFullmovCounts);
                 buttonFullmovState = BUTTONFULLMOV_RUNNING;
                 if (SerialPort) {
                     SerialPort.SendLine("Buttonfullmov started.");
+                }
+            }
+
+            // Start the ButtonHalfmov on a rising edge when homing is idle.
+            if (buttonHalfRisingEdge && homing.state == HOMING_IDLE &&
+                buttonHalfmovState == BUTTONHALFMOV_IDLE &&
+                buttonFullmovState == BUTTONFULLMOV_IDLE) {
+                motor.VelMax(RpmToPulsesPerSec(buttonHalfmovRpm));
+                motor.Move(-buttonHalfmovCounts);
+                buttonHalfmovState = BUTTONHALFMOV_RUNNING;
+                if (SerialPort) {
+                    SerialPort.SendLine("ButtonHalfmov started.");
                 }
             }
 
@@ -447,6 +480,31 @@ int main(void) {
                     HomingStateEnter(homing, HOMING_FAST_SEEK);
                     if (SerialPort) {
                         SerialPort.SendLine("Homing started after Buttonfullmov.");
+                    }
+                }
+            }
+
+            // Detect completion of the ButtonHalfmov, log position, and start homing.
+            if (buttonHalfmovState == BUTTONHALFMOV_RUNNING &&
+                motor.StepsComplete()) {
+                buttonHalfmovState = BUTTONHALFMOV_IDLE;
+                motor.VelMax(RpmToPulsesPerSec(fastSeekRpm));
+                if (SerialPort) {
+                    SerialPort.Send("ButtonHalfmov complete. PositionRefCommanded: ");
+                    SerialPort.SendLine(motor.PositionRefCommanded());
+                }
+                if (homeTripped) {
+                    motor.PositionRefSet(0);
+                    homing.homed = true;
+                    HomingStateEnter(homing, HOMING_COMPLETE);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                    }
+                } else {
+                    homing.homed = false;
+                    HomingStateEnter(homing, HOMING_FAST_SEEK);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Homing started after ButtonHalfmov.");
                     }
                 }
             }
