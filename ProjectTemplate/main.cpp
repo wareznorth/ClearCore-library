@@ -498,6 +498,13 @@ int main(void) {
                             motor.VelMax(
                                 RpmToPulsesPerSec(
                                     static_cast<int32_t>(buttonFullmovRpmCommand)));
+                            if (SerialPort) {
+                                SerialPort.Send("Torque error: ");
+                                SerialPort.Send(int8_t(round(error)));
+                                SerialPort.Send("%, Buttonfullmov RPM cmd: ");
+                                SerialPort.SendLine(
+                                    static_cast<int32_t>(buttonFullmovRpmCommand));
+                            }
                         } else {
                             buttonHalfmovRpmCommand +=
                                 error * torqueRegGainRpmPerPercent;
@@ -509,6 +516,13 @@ int main(void) {
                             motor.VelMax(
                                 RpmToPulsesPerSec(
                                     static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                            if (SerialPort) {
+                                SerialPort.Send("Torque error: ");
+                                SerialPort.Send(int8_t(round(error)));
+                                SerialPort.Send("%, ButtonHalfmov RPM cmd: ");
+                                SerialPort.SendLine(
+                                    static_cast<int32_t>(buttonHalfmovRpmCommand));
+                            }
                         }
                     }
                 }
