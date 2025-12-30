@@ -125,6 +125,10 @@ static int32_t RpmToPulsesPerSec(int32_t rpm) {
     return (rpm * pulsesPerRev) / 60;
 }
 
+static int32_t PulsesPerSecToRpm(int32_t pulsesPerSec) {
+    return (pulsesPerSec * 60) / pulsesPerRev;
+}
+
 static void ReportHlfbTorque(uint32_t &lastReportMs) {
     if (!SerialPort) {
         return;
@@ -141,7 +145,9 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
     if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
         // Writes the torque measured, as a percent of motor peak torque rating
         SerialPort.Send(int8_t(round(motor.HlfbPercent())));
-        SerialPort.SendLine("% torque");
+        SerialPort.Send("% torque, RPM: ");
+        SerialPort.SendLine(
+            PulsesPerSecToRpm(motor.VelocityRefCommanded()));
     }
 }
 
