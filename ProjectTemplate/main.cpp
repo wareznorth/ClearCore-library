@@ -511,9 +511,7 @@ int main(void) {
                         }
                         float error = torqueTargetPercent - measuredDuty;
                         if (SerialPort) {
-                            SerialPort.Send("HLFB duty: ");
-                            SerialPort.Send(measuredDuty, 2);
-                            SerialPort.Send("%, target: ");
+                            SerialPort.Send("Torque target: ");
                             SerialPort.Send(torqueTargetPercent, 2);
                             SerialPort.SendLine("%");
                         }
