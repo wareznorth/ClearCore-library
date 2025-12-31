@@ -132,33 +132,7 @@ static int32_t PulsesPerSecToRpm(int32_t pulsesPerSec) {
 }
 
 static void ReportHlfbTorque(uint32_t &lastReportMs) {
-    if (!SerialPort) {
-        return;
-    }
-
-    if (Milliseconds() - lastReportMs < hlfbReportMs) {
-        return;
-    }
-
-    lastReportMs = Milliseconds();
-
-    SerialPort.Send("HLFB state: ");
-
-    // Check the current state of the ClearPath's HLFB.
-    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
-
-    // Write the HLFB state to the serial port
-    if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
-        // Writes the torque measured, as a percent of motor peak torque rating
-        SerialPort.Send(int8_t(round(motor.HlfbPercent())));
-        SerialPort.SendLine("% torque");
-    } else if (hlfbState == MotorDriver::HLFB_ASSERTED) {
-        // Asserted indicates either "Move Done" for position modes, or
-        // "At Target Velocity" for velocity moves
-        SerialPort.SendLine("ASSERTED");
-    } else {
-        SerialPort.SendLine("DISABLED or SHUTDOWN");
-    }
+    (void)lastReportMs;
 }
 
 static void LogAlertsAndPosition(const char *label) {
@@ -500,6 +474,26 @@ int main(void) {
             // is active. No torque regulation is applied during homing.
             if (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
                 buttonHalfmovState == BUTTONHALFMOV_RUNNING) {
+                if (SerialPort && (Milliseconds() - lastHlfbReportMs >= hlfbReportMs)) {
+                    lastHlfbReportMs = Milliseconds();
+                    SerialPort.Send("HLFB state: ");
+
+                    // Check the current state of the ClearPath's HLFB.
+                    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+
+                    // Write the HLFB state to the serial port
+                    if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
+                        // Writes the torque measured, as a percent of motor peak torque rating
+                        SerialPort.Send(int8_t(round(motor.HlfbPercent())));
+                        SerialPort.SendLine("% torque");
+                    } else if (hlfbState == MotorDriver::HLFB_ASSERTED) {
+                        // Asserted indicates either "Move Done" for position modes, or
+                        // "At Target Velocity" for velocity moves
+                        SerialPort.SendLine("ASSERTED");
+                    } else {
+                        SerialPort.SendLine("DISABLED or SHUTDOWN");
+                    }
+                }
                 if (torqueRegIntervalMs == 0 ||
                     (Milliseconds() - lastTorqueRegMs) >= torqueRegIntervalMs) {
                     lastTorqueRegMs = Milliseconds();
