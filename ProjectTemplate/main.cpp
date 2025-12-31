@@ -511,11 +511,11 @@ int main(void) {
                             SerialPort.Send(int8_t(round(torqueTargetPercent)));
                             SerialPort.SendLine("%");
                         }
-                        // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
-                        // Negative error -> increase RPM, positive error -> decrease RPM.
+                        // RPM COMMAND UPDATE (ERROR SIGN NORMAL)
+                        // Negative error -> decrease RPM, positive error -> increase RPM.
                         if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                             buttonFullmovRpmCommand +=
-                                (-error) * torqueRegGainRpmPerPercent;
+                                error * torqueRegGainRpmPerPercent;
                             if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
                                 buttonFullmovRpmCommand = torqueRegMaxRpm;
                             } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
@@ -531,7 +531,7 @@ int main(void) {
                             }
                         } else {
                             buttonHalfmovRpmCommand +=
-                                (-error) * torqueRegGainRpmPerPercent;
+                                error * torqueRegGainRpmPerPercent;
                             if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
                                 buttonHalfmovRpmCommand = torqueRegMaxRpm;
                             } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
