@@ -497,6 +497,15 @@ int main(void) {
                         float measuredTorque =
                             (measuredDuty - 50.0f) * (100.0f / 45.0f);
                         float error = torqueTargetPercent - measuredTorque;
+                        if (SerialPort) {
+                            SerialPort.Send("HLFB duty: ");
+                            SerialPort.Send(int8_t(round(measuredDuty)));
+                            SerialPort.Send("%, torque mapped: ");
+                            SerialPort.Send(int8_t(round(measuredTorque)));
+                            SerialPort.Send("%, target: ");
+                            SerialPort.Send(int8_t(round(torqueTargetPercent)));
+                            SerialPort.SendLine("%");
+                        }
                         if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                             buttonFullmovRpmCommand +=
                                 error * torqueRegGainRpmPerPercent;
