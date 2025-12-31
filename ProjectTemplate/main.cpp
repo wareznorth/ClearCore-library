@@ -148,14 +148,14 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
     MotorDriver::HlfbStates hlfbState = motor.HlfbState();
 
     // Write the HLFB state to the serial port
-    if (hlfbState == MotorDriver::HLFB_ASSERTED) {
+    if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
+        // Writes the torque measured, as a percent of motor peak torque rating
+        SerialPort.Send(int8_t(round(motor.HlfbPercent())));
+        SerialPort.SendLine("% torque");
+    } else if (hlfbState == MotorDriver::HLFB_ASSERTED) {
         // Asserted indicates either "Move Done" for position modes, or
         // "At Target Velocity" for velocity moves
         SerialPort.SendLine("ASSERTED");
-    } else if (hlfbState == MotorDriver::HLFB_DEASSERTED) {
-        SerialPort.SendLine("DEASSERTED");
-    } else if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
-        SerialPort.SendLine("HAS MEASUREMENT");
     } else {
         SerialPort.SendLine("DISABLED or SHUTDOWN");
     }
