@@ -150,7 +150,7 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
         if (dutyPercent == MotorDriver::HLFB_DUTY_UNKNOWN) {
             SerialPort.SendLine("HLFB duty unknown");
         } else {
-            SerialPort.Send(int8_t(round(dutyPercent)));
+            SerialPort.Send(dutyPercent, 2);
             SerialPort.Send("% torque, RPM: ");
             SerialPort.SendLine(
                 PulsesPerSecToRpm(motor.VelocityRefCommanded()));
@@ -509,9 +509,9 @@ int main(void) {
                         float error = torqueTargetPercent - measuredDuty;
                         if (SerialPort) {
                             SerialPort.Send("HLFB duty: ");
-                            SerialPort.Send(int8_t(round(measuredDuty)));
+                            SerialPort.Send(measuredDuty, 2);
                             SerialPort.Send("%, target: ");
-                            SerialPort.Send(int8_t(round(torqueTargetPercent)));
+                            SerialPort.Send(torqueTargetPercent, 2);
                             SerialPort.SendLine("%");
                         }
                         // RPM COMMAND UPDATE (ERROR SIGN NORMAL)
