@@ -146,10 +146,15 @@ static void ReportHlfbTorque(uint32_t &lastReportMs) {
     MotorDriver::HlfbStates hlfbState = motor.HlfbState();
     if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
         // Writes the torque measured, as a percent of motor peak torque rating
-        SerialPort.Send(int8_t(round(motor.HlfbPercent())));
-        SerialPort.Send("% torque, RPM: ");
-        SerialPort.SendLine(
-            PulsesPerSecToRpm(motor.VelocityRefCommanded()));
+        float dutyPercent = motor.HlfbPercent();
+        if (dutyPercent == MotorDriver::HLFB_DUTY_UNKNOWN) {
+            SerialPort.SendLine("HLFB duty unknown");
+        } else {
+            SerialPort.Send(int8_t(round(dutyPercent)));
+            SerialPort.Send("% torque, RPM: ");
+            SerialPort.SendLine(
+                PulsesPerSecToRpm(motor.VelocityRefCommanded()));
+        }
     }
 }
 
@@ -520,9 +525,7 @@ int main(void) {
                                 -RpmToPulsesPerSec(
                                     static_cast<int32_t>(buttonFullmovRpmCommand)));
                             if (SerialPort) {
-                                SerialPort.Send("Torque error: ");
-                                SerialPort.Send(int8_t(round(error)));
-                                SerialPort.Send("% (mapped), Buttonfullmov RPM cmd: ");
+                                SerialPort.Send("Buttonfullmov RPM cmd: ");
                                 SerialPort.SendLine(
                                     static_cast<int32_t>(buttonFullmovRpmCommand));
                             }
@@ -538,9 +541,7 @@ int main(void) {
                                 -RpmToPulsesPerSec(
                                     static_cast<int32_t>(buttonHalfmovRpmCommand)));
                             if (SerialPort) {
-                                SerialPort.Send("Torque error: ");
-                                SerialPort.Send(int8_t(round(error)));
-                                SerialPort.Send("% (mapped), ButtonHalfmov RPM cmd: ");
+                                SerialPort.Send("ButtonHalfmov RPM cmd: ");
                                 SerialPort.SendLine(
                                     static_cast<int32_t>(buttonHalfmovRpmCommand));
                             }
