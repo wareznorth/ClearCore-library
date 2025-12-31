@@ -53,7 +53,7 @@
 #define torqueTargetPercent -20.0f
 #define torqueRegMaxRpm 200.0f
 #define torqueRegMinRpm 20.0f
-#define torqueRegGainRpmPerPercent 2.0f
+#define torqueRegGainRpmPerPercent 10.0f
 #define torqueRegIntervalMs 0
 
 
