@@ -127,10 +127,6 @@ static int32_t RpmToPulsesPerSec(int32_t rpm) {
     return (rpm * pulsesPerRev) / 60;
 }
 
-static int32_t PulsesPerSecToRpm(int32_t pulsesPerSec) {
-    return (pulsesPerSec * 60) / pulsesPerRev;
-}
-
 static void ReportHlfbTorque(uint32_t &lastReportMs) {
     (void)lastReportMs;
 }
