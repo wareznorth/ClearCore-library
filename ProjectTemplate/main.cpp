@@ -494,14 +494,10 @@ int main(void) {
                     MotorDriver::HlfbStates hlfbState = motor.HlfbState();
                     if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
                         float measuredDuty = motor.HlfbPercent();
-                        float measuredTorque =
-                            (measuredDuty - 50.0f) * (100.0f / 45.0f);
-                        float error = torqueTargetPercent - measuredTorque;
+                        float error = torqueTargetPercent - measuredDuty;
                         if (SerialPort) {
                             SerialPort.Send("HLFB duty: ");
                             SerialPort.Send(int8_t(round(measuredDuty)));
-                            SerialPort.Send("%, torque mapped: ");
-                            SerialPort.Send(int8_t(round(measuredTorque)));
                             SerialPort.Send("%, target: ");
                             SerialPort.Send(int8_t(round(torqueTargetPercent)));
                             SerialPort.SendLine("%");
