@@ -485,7 +485,11 @@ int main(void) {
                 }
             }
 
-            // Torque regulation only during button moves (no homing regulation).
+            // ================================
+            // TORQUE REGULATION (BUTTON MOVES)
+            // ================================
+            // Adjust commanded velocity based on HLFB duty while a button move
+            // is active. No torque regulation is applied during homing.
             if (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
                 buttonHalfmovState == BUTTONHALFMOV_RUNNING) {
                 if (torqueRegIntervalMs == 0 ||
