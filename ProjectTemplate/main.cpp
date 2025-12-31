@@ -50,7 +50,7 @@
 #define buttonHalfmovCounts 128000
 
 // Torque regulation parameters (Button moves only).
-#define torqueTargetPercent 35.0f
+#define torqueTargetPercent -20.0f
 #define torqueRegMaxRpm 200.0f
 #define torqueRegMinRpm 20.0f
 #define torqueRegGainRpmPerPercent 1.0f
@@ -502,11 +502,11 @@ int main(void) {
                             SerialPort.Send(torqueTargetPercent, 2);
                             SerialPort.SendLine("%");
                         }
-                        // RPM COMMAND UPDATE (ERROR SIGN NORMAL)
-                        // Negative error -> decrease RPM, positive error -> increase RPM.
+                        // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
+                        // Negative error -> increase RPM, positive error -> decrease RPM.
                         if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                             buttonFullmovRpmCommand +=
-                                error * torqueRegGainRpmPerPercent;
+                                (-error) * torqueRegGainRpmPerPercent;
                             if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
                                 buttonFullmovRpmCommand = torqueRegMaxRpm;
                             } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
@@ -522,7 +522,7 @@ int main(void) {
                             }
                         } else {
                             buttonHalfmovRpmCommand +=
-                                error * torqueRegGainRpmPerPercent;
+                                (-error) * torqueRegGainRpmPerPercent;
                             if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
                                 buttonHalfmovRpmCommand = torqueRegMaxRpm;
                             } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
