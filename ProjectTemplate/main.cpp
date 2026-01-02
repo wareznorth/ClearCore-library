@@ -264,8 +264,8 @@ int main(void) {
     // Configure IO-3 as a digital output (once-per-rev pulse).
     ConnectorIO3.Mode(Connector::OUTPUT_DIGITAL);
 
-    // Configure A-12 as an analog input for the proximity sensor.
-    ConnectorA12.Mode(Connector::INPUT_ANALOG);
+    // Configure A-12 as a digital input for the proximity sensor pulse output.
+    ConnectorA12.Mode(Connector::INPUT_DIGITAL);
 
     // Configure motor for Step and Direction mode.
     MotorMgr.MotorInputClocking(MotorManager::CLOCK_RATE_NORMAL);
