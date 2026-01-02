@@ -582,7 +582,9 @@ int main(void) {
                                 }
                             }
                         } else if (SerialPort) {
-                            SerialPort.SendLine("Torque hold active. RPM update skipped.");
+                            SerialPort.Send("Torque hold active. Duty: ");
+                            SerialPort.Send(measuredDuty, 2);
+                            SerialPort.SendLine("%");
                         }
                     }
                 }
