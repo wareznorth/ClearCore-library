@@ -56,6 +56,8 @@
 #define torqueRegMinRpm 20.0f
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
+#define torqueStopDutyPercent -24.0f
+#define torqueResumeDutyPercent -23.0f
 
 
 // Debounce helper for a digital input.
@@ -313,6 +315,7 @@ int main(void) {
     uint32_t faultFlashStartMs = 0;
     bool faultFlashState = false;
     bool faultLogged = false;
+    bool torqueHoldActive = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -513,52 +516,69 @@ int main(void) {
                         SerialPort.SendLine("DISABLED or SHUTDOWN");
                     }
                 }
+                float measuredDuty = motor.HlfbPercent();
+                if (!torqueHoldActive && measuredDuty <= torqueStopDutyPercent) {
+                    motor.MoveStopDecel(stopDecel);
+                    torqueHoldActive = true;
+                    if (SerialPort) {
+                        SerialPort.SendLine("Torque limit reached. Motion stopped.");
+                    }
+                } else if (torqueHoldActive &&
+                           measuredDuty > torqueResumeDutyPercent) {
+                    torqueHoldActive = false;
+                    if (SerialPort) {
+                        SerialPort.SendLine("Torque recovered. Motion resumed.");
+                    }
+                }
                 if (torqueRegIntervalMs == 0 ||
                     (Milliseconds() - lastTorqueRegMs) >= torqueRegIntervalMs) {
                     lastTorqueRegMs = Milliseconds();
                     MotorDriver::HlfbStates hlfbState = motor.HlfbState();
                     if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
-                        float measuredDuty = motor.HlfbPercent();
                         float error = torqueTargetPercent - measuredDuty;
                         if (SerialPort) {
                             SerialPort.Send("Torque target: ");
                             SerialPort.Send(torqueTargetPercent, 2);
                             SerialPort.SendLine("%");
                         }
-                        // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
-                        // Negative error -> increase RPM, positive error -> decrease RPM.
-                        if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                            buttonFullmovRpmCommand +=
-                                (-error) * torqueRegGainRpmPerPercent;
-                            if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
-                                buttonFullmovRpmCommand = torqueRegMaxRpm;
-                            } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
-                                buttonFullmovRpmCommand = torqueRegMinRpm;
+                        if (!torqueHoldActive) {
+                            // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
+                            // Negative error -> increase RPM, positive error -> decrease RPM.
+                            if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
+                                buttonFullmovRpmCommand +=
+                                    (-error) * torqueRegGainRpmPerPercent;
+                                if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
+                                    buttonFullmovRpmCommand = torqueRegMaxRpm;
+                                } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
+                                    buttonFullmovRpmCommand = torqueRegMinRpm;
+                                }
+                                motor.MoveVelocity(
+                                    -RpmToPulsesPerSec(
+                                        static_cast<int32_t>(buttonFullmovRpmCommand)));
+                                if (SerialPort) {
+                                    SerialPort.Send("Buttonfullmov RPM cmd: ");
+                                    SerialPort.SendLine(
+                                        static_cast<int32_t>(buttonFullmovRpmCommand));
+                                }
+                            } else {
+                                buttonHalfmovRpmCommand +=
+                                    (-error) * torqueRegGainRpmPerPercent;
+                                if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
+                                    buttonHalfmovRpmCommand = torqueRegMaxRpm;
+                                } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
+                                    buttonHalfmovRpmCommand = torqueRegMinRpm;
+                                }
+                                motor.MoveVelocity(
+                                    -RpmToPulsesPerSec(
+                                        static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                                if (SerialPort) {
+                                    SerialPort.Send("ButtonHalfmov RPM cmd: ");
+                                    SerialPort.SendLine(
+                                        static_cast<int32_t>(buttonHalfmovRpmCommand));
+                                }
                             }
-                            motor.MoveVelocity(
-                                -RpmToPulsesPerSec(
-                                    static_cast<int32_t>(buttonFullmovRpmCommand)));
-                            if (SerialPort) {
-                                SerialPort.Send("Buttonfullmov RPM cmd: ");
-                                SerialPort.SendLine(
-                                    static_cast<int32_t>(buttonFullmovRpmCommand));
-                            }
-                        } else {
-                            buttonHalfmovRpmCommand +=
-                                (-error) * torqueRegGainRpmPerPercent;
-                            if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
-                                buttonHalfmovRpmCommand = torqueRegMaxRpm;
-                            } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
-                                buttonHalfmovRpmCommand = torqueRegMinRpm;
-                            }
-                            motor.MoveVelocity(
-                                -RpmToPulsesPerSec(
-                                    static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                            if (SerialPort) {
-                                SerialPort.Send("ButtonHalfmov RPM cmd: ");
-                                SerialPort.SendLine(
-                                    static_cast<int32_t>(buttonHalfmovRpmCommand));
-                            }
+                        } else if (SerialPort) {
+                            SerialPort.SendLine("Torque hold active. RPM update skipped.");
                         }
                     }
                 }
