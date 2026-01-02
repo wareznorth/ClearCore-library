@@ -40,6 +40,7 @@
 #define slowLatchTimeoutMs 8000
 #define revPulseWidthMs 50
 #define hlfbReportMs 100
+#define faultFlashIntervalMs 250
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
@@ -309,6 +310,9 @@ int main(void) {
     float buttonHalfmovRpmCommand = buttonHalfmovRpm;
     int32_t buttonFullmovStartPos = 0;
     int32_t buttonHalfmovStartPos = 0;
+    uint32_t faultFlashStartMs = 0;
+    bool faultFlashState = false;
+    bool faultLogged = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -413,20 +417,39 @@ int main(void) {
         }
 
         // Update IO indicators and generate the once-per-rev pulse output.
-        // Update home limit indicator on IO-1 (inverted).
-        ConnectorIO1.State(!homeTripped);
+        bool stepsActive = motor.StatusReg().bit.StepsActive;
+        bool alertsPresent = motor.StatusReg().bit.AlertsPresent;
+        bool motorFaultedWhileActive = stepsActive && alertsPresent;
+        if (motorFaultedWhileActive) {
+            if (Milliseconds() - faultFlashStartMs >= faultFlashIntervalMs) {
+                faultFlashStartMs = Milliseconds();
+                faultFlashState = !faultFlashState;
+            }
+            ConnectorIO1.State(faultFlashState);
+            ConnectorIO3.State(!faultFlashState);
+            if (!faultLogged && SerialPort) {
+                SerialPort.SendLine("Motor faulted and stopped.");
+                faultLogged = true;
+            }
+        } else {
+            faultLogged = false;
+            faultFlashState = false;
 
-        // Generate a pulse on IO-3 once per revolution.
-        if (currentRevIndex != lastRevIndex) {
-            lastRevIndex = currentRevIndex;
-            revPulseActive = true;
-            revPulseStartMs = Milliseconds();
-            ConnectorIO3.State(true);
-        }
-        if (revPulseActive &&
-            (Milliseconds() - revPulseStartMs >= revPulseWidthMs)) {
-            revPulseActive = false;
-            ConnectorIO3.State(false);
+            // Update home limit indicator on IO-1 (inverted).
+            ConnectorIO1.State(!homeTripped);
+
+            // Generate a pulse on IO-3 once per revolution.
+            if (currentRevIndex != lastRevIndex) {
+                lastRevIndex = currentRevIndex;
+                revPulseActive = true;
+                revPulseStartMs = Milliseconds();
+                ConnectorIO3.State(true);
+            }
+            if (revPulseActive &&
+                (Milliseconds() - revPulseStartMs >= revPulseWidthMs)) {
+                revPulseActive = false;
+                ConnectorIO3.State(false);
+            }
         }
 
         // Report HLFB torque measurements at a fixed interval over serial.
