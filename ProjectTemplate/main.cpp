@@ -419,8 +419,8 @@ int main(void) {
         // Update IO indicators and generate the once-per-rev pulse output.
         bool stepsActive = motor.StatusReg().bit.StepsActive;
         bool alertsPresent = motor.StatusReg().bit.AlertsPresent;
-        bool motorFaultedWhileActive = stepsActive && alertsPresent;
-        if (motorFaultedWhileActive) {
+        bool motorFaultedWhileStopped = !stepsActive && alertsPresent;
+        if (motorFaultedWhileStopped) {
             if (Milliseconds() - faultFlashStartMs >= faultFlashIntervalMs) {
                 faultFlashStartMs = Milliseconds();
                 faultFlashState = !faultFlashState;
@@ -428,7 +428,7 @@ int main(void) {
             ConnectorIO1.State(faultFlashState);
             ConnectorIO3.State(!faultFlashState);
             if (!faultLogged && SerialPort) {
-                SerialPort.SendLine("Motor faulted and stopped.");
+                SerialPort.SendLine("Motor faulted while stopped.");
                 faultLogged = true;
             }
         } else {
