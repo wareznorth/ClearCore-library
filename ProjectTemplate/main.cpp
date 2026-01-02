@@ -57,8 +57,8 @@
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
 #define torqueStopDutyPercent -24.0f
-#define torqueResumeDutyPercent -23.0f
 #define torqueHoldDelayMs 500
+#define torqueResumeDelayMs 500
 
 
 // Debounce helper for a digital input.
@@ -317,6 +317,7 @@ int main(void) {
     bool faultFlashState = false;
     bool faultLogged = false;
     bool torqueHoldActive = false;
+    bool torqueResumeActive = false;
     uint32_t torqueHoldStartMs = 0;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
@@ -519,19 +520,55 @@ int main(void) {
                     }
                 }
                 float measuredDuty = motor.HlfbPercent();
-                if (!torqueHoldActive && measuredDuty <= torqueStopDutyPercent) {
+                bool alertsPresent = motor.StatusReg().bit.AlertsPresent;
+                if (!torqueHoldActive && alertsPresent &&
+                    measuredDuty <= torqueStopDutyPercent) {
                     motor.MoveStopDecel(stopDecel);
                     torqueHoldActive = true;
+                    torqueResumeActive = false;
                     torqueHoldStartMs = Milliseconds();
                     if (SerialPort) {
-                        SerialPort.SendLine("Torque limit reached. Motion stopped.");
+                        SerialPort.SendLine("Torque limit reached. Motion paused.");
+                    }
+                } else if (torqueHoldActive && !alertsPresent) {
+                    torqueHoldActive = false;
+                    torqueResumeActive = false;
+                    if (SerialPort) {
+                        SerialPort.SendLine("Motor fault cleared. Torque hold released.");
                     }
                 } else if (torqueHoldActive &&
-                           (Milliseconds() - torqueHoldStartMs) >= torqueHoldDelayMs &&
-                           measuredDuty > torqueResumeDutyPercent) {
+                           measuredDuty > torqueStopDutyPercent) {
                     torqueHoldActive = false;
+                    torqueResumeActive = false;
                     if (SerialPort) {
                         SerialPort.SendLine("Torque recovered. Motion resumed.");
+                    }
+                } else if (torqueHoldActive) {
+                    uint32_t elapsed = Milliseconds() - torqueHoldStartMs;
+                    if (!torqueResumeActive &&
+                        elapsed >= torqueHoldDelayMs) {
+                        torqueResumeActive = true;
+                        torqueHoldStartMs = Milliseconds();
+                        if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
+                            motor.MoveVelocity(
+                                -RpmToPulsesPerSec(
+                                    static_cast<int32_t>(buttonFullmovRpmCommand)));
+                        } else {
+                            motor.MoveVelocity(
+                                -RpmToPulsesPerSec(
+                                    static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                        }
+                        if (SerialPort) {
+                            SerialPort.SendLine("Torque pause complete. Trying resume.");
+                        }
+                    } else if (torqueResumeActive &&
+                               elapsed >= torqueResumeDelayMs) {
+                        motor.MoveStopDecel(stopDecel);
+                        torqueResumeActive = false;
+                        torqueHoldStartMs = Milliseconds();
+                        if (SerialPort) {
+                            SerialPort.SendLine("Torque still high. Pausing again.");
+                        }
                     }
                 }
                 if (torqueRegIntervalMs == 0 ||
