@@ -50,10 +50,10 @@
 #define buttonHalfmovCounts 128000
 
 // Torque regulation parameters (Button moves only).
-#define torqueTargetPercent -20.0f
+#define torqueTargetPercent -10.0f
 #define torqueRegMaxRpm 200.0f
 #define torqueRegMinRpm 20.0f
-#define torqueRegGainRpmPerPercent 10.0f
+#define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
 
 
