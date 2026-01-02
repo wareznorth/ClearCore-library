@@ -549,6 +549,7 @@ int main(void) {
                         elapsed >= torqueHoldDelayMs) {
                         torqueResumeActive = true;
                         torqueHoldStartMs = Milliseconds();
+                        motor.ClearAlerts();
                         if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                             motor.MoveVelocity(
                                 -RpmToPulsesPerSec(
