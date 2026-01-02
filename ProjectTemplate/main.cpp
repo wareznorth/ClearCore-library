@@ -41,6 +41,8 @@
 #define revPulseWidthMs 50
 #define hlfbReportMs 100
 #define faultFlashIntervalMs 250
+#define proxWindowMs 1000
+#define proxMinHz 30
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
@@ -261,6 +263,9 @@ int main(void) {
     // Configure IO-3 as a digital output (once-per-rev pulse).
     ConnectorIO3.Mode(Connector::OUTPUT_DIGITAL);
 
+    // Configure A-12 as a digital input for the proximity sensor pulse output.
+    ConnectorA12.Mode(Connector::INPUT_DIGITAL);
+
     // Configure motor for Step and Direction mode.
     MotorMgr.MotorInputClocking(MotorManager::CLOCK_RATE_NORMAL);
     MotorMgr.MotorModeSet(MotorManager::MOTOR_ALL,
@@ -313,6 +318,10 @@ int main(void) {
     uint32_t faultFlashStartMs = 0;
     bool faultFlashState = false;
     bool faultLogged = false;
+    uint32_t proxWindowStartMs = Milliseconds();
+    uint32_t proxPulseCount = 0;
+    float proxHz = 0.0f;
+    bool proxLogged = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -374,6 +383,20 @@ int main(void) {
         bool buttonHalfRisingEdge = buttonHalfPressed && !buttonHalfPrevState;
         buttonPrevState = buttonPressed;
         buttonHalfPrevState = buttonHalfPressed;
+
+        // Update proximity sensor pulse frequency (Proxout on A-12).
+        SysConnectorState proxMask;
+        proxMask.bit.CLEARCORE_PIN_A12 = 1;
+        if (InputMgr.InputsRisen(proxMask).bit.CLEARCORE_PIN_A12) {
+            proxPulseCount++;
+        }
+        uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
+        if (proxElapsedMs >= proxWindowMs) {
+            proxHz = (proxPulseCount * 1000.0f) / proxElapsedMs;
+            proxPulseCount = 0;
+            proxWindowStartMs = Milliseconds();
+        }
+        bool proxOk = proxHz > proxMinHz;
 
         // Handle enable switch transitions: enable motor and start/skip homing,
         // or stop motion and disable immediately when enable is removed.
@@ -459,7 +482,8 @@ int main(void) {
             // Start the Buttonfullmov on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
                 buttonFullmovState == BUTTONFULLMOV_IDLE &&
-                buttonHalfmovState == BUTTONHALFMOV_IDLE) {
+                buttonHalfmovState == BUTTONHALFMOV_IDLE &&
+                proxOk) {
                 buttonFullmovRpmCommand = buttonFullmovRpm;
                 buttonFullmovStartPos = motor.PositionRefCommanded();
                 motor.MoveVelocity(
@@ -474,7 +498,8 @@ int main(void) {
             // Start the ButtonHalfmov on a rising edge when homing is idle.
             if (buttonHalfRisingEdge && homing.state == HOMING_IDLE &&
                 buttonHalfmovState == BUTTONHALFMOV_IDLE &&
-                buttonFullmovState == BUTTONFULLMOV_IDLE) {
+                buttonFullmovState == BUTTONFULLMOV_IDLE &&
+                proxOk) {
                 buttonHalfmovRpmCommand = buttonHalfmovRpm;
                 buttonHalfmovStartPos = motor.PositionRefCommanded();
                 motor.MoveVelocity(
@@ -484,6 +509,14 @@ int main(void) {
                 if (SerialPort) {
                     SerialPort.SendLine("ButtonHalfmov started.");
                 }
+            }
+            if (!proxOk && (buttonRisingEdge || buttonHalfRisingEdge)) {
+                if (SerialPort && !proxLogged) {
+                    SerialPort.SendLine("Proxout below 30 Hz. Button moves blocked.");
+                    proxLogged = true;
+                }
+            } else if (proxOk) {
+                proxLogged = false;
             }
 
             // ================================
