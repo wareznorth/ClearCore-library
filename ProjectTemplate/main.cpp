@@ -58,6 +58,7 @@
 #define torqueRegIntervalMs 0
 #define torqueStopDutyPercent -24.0f
 #define torqueResumeDutyPercent -23.0f
+#define torqueHoldDelayMs 500
 
 
 // Debounce helper for a digital input.
@@ -316,6 +317,7 @@ int main(void) {
     bool faultFlashState = false;
     bool faultLogged = false;
     bool torqueHoldActive = false;
+    uint32_t torqueHoldStartMs = 0;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -520,10 +522,12 @@ int main(void) {
                 if (!torqueHoldActive && measuredDuty <= torqueStopDutyPercent) {
                     motor.MoveStopDecel(stopDecel);
                     torqueHoldActive = true;
+                    torqueHoldStartMs = Milliseconds();
                     if (SerialPort) {
                         SerialPort.SendLine("Torque limit reached. Motion stopped.");
                     }
                 } else if (torqueHoldActive &&
+                           (Milliseconds() - torqueHoldStartMs) >= torqueHoldDelayMs &&
                            measuredDuty > torqueResumeDutyPercent) {
                     torqueHoldActive = false;
                     if (SerialPort) {
