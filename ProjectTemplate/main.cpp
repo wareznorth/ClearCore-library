@@ -53,7 +53,7 @@
 // Torque regulation parameters (Button moves only).
 #define torqueTargetPercent -10.0f
 #define torqueRegMaxRpm 200.0f
-#define torqueRegMinRpm 20.0f
+#define torqueRegMinRpm 5.0f
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
 #define torqueStopDutyPercent -24.0f
