@@ -516,6 +516,9 @@ int main(void) {
                     proxLogged = true;
                 }
             } else if (proxOk) {
+                if (SerialPort && proxLogged) {
+                    SerialPort.SendLine("Proxout OK. Button moves enabled.");
+                }
                 proxLogged = false;
             }
 
