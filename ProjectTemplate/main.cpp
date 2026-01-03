@@ -325,6 +325,7 @@ int main(void) {
     float proxHz = 0.0f;
     uint32_t proxLogStartMs = Milliseconds();
     uint32_t proxLastPulseMs = Milliseconds();
+    bool stallHoldActive = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -527,6 +528,7 @@ int main(void) {
                 motor.MoveStopDecel(stopDecel);
                 buttonFullmovState = BUTTONFULLMOV_STOPPING;
                 buttonHalfmovState = BUTTONHALFMOV_STOPPING;
+                stallHoldActive = true;
                 if (SerialPort) {
                     SerialPort.SendLine("Proxout stall detected. Motion stopped.");
                 }
@@ -626,18 +628,20 @@ int main(void) {
                     SerialPort.Send("Buttonfullmov complete. PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
                 }
-                if (homeTripped) {
-                    motor.PositionRefSet(0);
-                    homing.homed = true;
-                    HomingStateEnter(homing, HOMING_COMPLETE);
-                    if (SerialPort) {
-                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
-                    }
-                } else {
-                    homing.homed = false;
-                    HomingStateEnter(homing, HOMING_FAST_SEEK);
-                    if (SerialPort) {
-                        SerialPort.SendLine("Homing started after Buttonfullmov.");
+                if (!stallHoldActive) {
+                    if (homeTripped) {
+                        motor.PositionRefSet(0);
+                        homing.homed = true;
+                        HomingStateEnter(homing, HOMING_COMPLETE);
+                        if (SerialPort) {
+                            SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                        }
+                    } else {
+                        homing.homed = false;
+                        HomingStateEnter(homing, HOMING_FAST_SEEK);
+                        if (SerialPort) {
+                            SerialPort.SendLine("Homing started after Buttonfullmov.");
+                        }
                     }
                 }
             }
@@ -658,6 +662,26 @@ int main(void) {
                     SerialPort.Send("ButtonHalfmov complete. PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
                 }
+                if (!stallHoldActive) {
+                    if (homeTripped) {
+                        motor.PositionRefSet(0);
+                        homing.homed = true;
+                        HomingStateEnter(homing, HOMING_COMPLETE);
+                        if (SerialPort) {
+                            SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                        }
+                    } else {
+                        homing.homed = false;
+                        HomingStateEnter(homing, HOMING_FAST_SEEK);
+                        if (SerialPort) {
+                            SerialPort.SendLine("Homing started after ButtonHalfmov.");
+                        }
+                    }
+                }
+            }
+
+            if (stallHoldActive && buttonRisingEdge) {
+                stallHoldActive = false;
                 if (homeTripped) {
                     motor.PositionRefSet(0);
                     homing.homed = true;
@@ -669,7 +693,7 @@ int main(void) {
                     homing.homed = false;
                     HomingStateEnter(homing, HOMING_FAST_SEEK);
                     if (SerialPort) {
-                        SerialPort.SendLine("Homing started after ButtonHalfmov.");
+                        SerialPort.SendLine("Homing started after stall recovery.");
                     }
                 }
             }
