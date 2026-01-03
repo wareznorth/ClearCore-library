@@ -490,7 +490,8 @@ int main(void) {
             // Start the Buttonfullmov on a rising edge when homing is idle.
             if (buttonRisingEdge && homing.state == HOMING_IDLE &&
                 buttonFullmovState == BUTTONFULLMOV_IDLE &&
-                buttonHalfmovState == BUTTONHALFMOV_IDLE) {
+                buttonHalfmovState == BUTTONHALFMOV_IDLE &&
+                proxOk) {
                 buttonFullmovRpmCommand = buttonFullmovRpm;
                 buttonFullmovStartPos = motor.PositionRefCommanded();
                 motor.MoveVelocity(
@@ -505,7 +506,8 @@ int main(void) {
             // Start the ButtonHalfmov on a rising edge when homing is idle.
             if (buttonHalfRisingEdge && homing.state == HOMING_IDLE &&
                 buttonHalfmovState == BUTTONHALFMOV_IDLE &&
-                buttonFullmovState == BUTTONFULLMOV_IDLE) {
+                buttonFullmovState == BUTTONFULLMOV_IDLE &&
+                proxOk) {
                 buttonHalfmovRpmCommand = buttonHalfmovRpm;
                 buttonHalfmovStartPos = motor.PositionRefCommanded();
                 motor.MoveVelocity(
