@@ -44,6 +44,7 @@
 #define proxWindowMs 1000
 #define proxMinHz 30
 #define proxLogIntervalMs 500
+#define proxStallMs 100
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
@@ -323,6 +324,7 @@ int main(void) {
     uint32_t proxPulseCount = 0;
     float proxHz = 0.0f;
     uint32_t proxLogStartMs = Milliseconds();
+    uint32_t proxLastPulseMs = Milliseconds();
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -390,6 +392,7 @@ int main(void) {
         proxMask.bit.CLEARCORE_PIN_A12 = 1;
         if (InputMgr.InputsRisen(proxMask).bit.CLEARCORE_PIN_A12) {
             proxPulseCount++;
+            proxLastPulseMs = Milliseconds();
         }
         uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
         if (proxElapsedMs >= proxWindowMs) {
@@ -516,6 +519,16 @@ int main(void) {
                 buttonHalfmovState = BUTTONHALFMOV_RUNNING;
                 if (SerialPort) {
                     SerialPort.SendLine("ButtonHalfmov started.");
+                }
+            }
+            if ((buttonFullmovState == BUTTONFULLMOV_RUNNING ||
+                 buttonHalfmovState == BUTTONHALFMOV_RUNNING) &&
+                (Milliseconds() - proxLastPulseMs >= proxStallMs)) {
+                motor.MoveStopDecel(stopDecel);
+                buttonFullmovState = BUTTONFULLMOV_STOPPING;
+                buttonHalfmovState = BUTTONHALFMOV_STOPPING;
+                if (SerialPort) {
+                    SerialPort.SendLine("Proxout stall detected. Motion stopped.");
                 }
             }
 
