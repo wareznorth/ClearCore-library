@@ -45,6 +45,7 @@
 #define proxMinHz 30
 #define proxLogIntervalMs 500
 #define proxStallMs 100
+#define stallReverseCounts 5000
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
@@ -115,6 +116,12 @@ enum ButtonHalfmovState {
     BUTTONHALFMOV_IDLE,
     BUTTONHALFMOV_RUNNING,
     BUTTONHALFMOV_STOPPING
+};
+
+enum StallState {
+    STALL_IDLE,
+    STALL_WAIT_STOP,
+    STALL_REVERSING
 };
 
 struct HomingContext {
@@ -326,6 +333,7 @@ int main(void) {
     uint32_t proxLogStartMs = Milliseconds();
     uint32_t proxLastPulseMs = Milliseconds();
     bool stallHoldActive = false;
+    StallState stallState = STALL_IDLE;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -522,15 +530,31 @@ int main(void) {
                     SerialPort.SendLine("ButtonHalfmov started.");
                 }
             }
-            if ((buttonFullmovState == BUTTONFULLMOV_RUNNING ||
+            if (stallState == STALL_IDLE &&
+                (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
                  buttonHalfmovState == BUTTONHALFMOV_RUNNING) &&
                 (Milliseconds() - proxLastPulseMs >= proxStallMs)) {
                 motor.MoveStopDecel(stopDecel);
                 buttonFullmovState = BUTTONFULLMOV_STOPPING;
                 buttonHalfmovState = BUTTONHALFMOV_STOPPING;
                 stallHoldActive = true;
+                stallState = STALL_WAIT_STOP;
                 if (SerialPort) {
                     SerialPort.SendLine("Proxout stall detected. Motion stopped.");
+                }
+            }
+            if (stallState == STALL_WAIT_STOP && motor.StepsComplete()) {
+                motor.Move(stallReverseCounts);
+                stallState = STALL_REVERSING;
+                if (SerialPort) {
+                    SerialPort.SendLine("Stall recovery: reversing 5000 counts.");
+                }
+            }
+            if (stallState == STALL_REVERSING && motor.StepsComplete()) {
+                stallState = STALL_IDLE;
+                stallHoldActive = true;
+                if (SerialPort) {
+                    SerialPort.SendLine("Stall recovery complete. Waiting for IO4.");
                 }
             }
 
@@ -682,6 +706,7 @@ int main(void) {
 
             if (stallHoldActive && buttonRisingEdge) {
                 stallHoldActive = false;
+                stallState = STALL_IDLE;
                 if (homeTripped) {
                     motor.PositionRefSet(0);
                     homing.homed = true;
