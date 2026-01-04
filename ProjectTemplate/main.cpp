@@ -707,19 +707,17 @@ int main(void) {
             if (stallHoldActive && buttonRisingEdge) {
                 stallHoldActive = false;
                 stallState = STALL_IDLE;
-                if (homeTripped) {
-                    motor.PositionRefSet(0);
-                    homing.homed = true;
-                    HomingStateEnter(homing, HOMING_COMPLETE);
-                    if (SerialPort) {
-                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
-                    }
-                } else {
-                    homing.homed = false;
-                    HomingStateEnter(homing, HOMING_FAST_SEEK);
-                    if (SerialPort) {
-                        SerialPort.SendLine("Homing started after stall recovery.");
-                    }
+                if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
+                    motor.MoveVelocity(
+                        -RpmToPulsesPerSec(
+                            static_cast<int32_t>(buttonFullmovRpmCommand)));
+                } else if (buttonHalfmovState == BUTTONHALFMOV_RUNNING) {
+                    motor.MoveVelocity(
+                        -RpmToPulsesPerSec(
+                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                }
+                if (SerialPort) {
+                    SerialPort.SendLine("Stall cleared. Resuming button move.");
                 }
             }
 
