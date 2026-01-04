@@ -413,8 +413,8 @@ int main(void) {
         if (SerialPort && (Milliseconds() - proxLogStartMs) >= proxLogIntervalMs) {
             proxLogStartMs = Milliseconds();
             SerialPort.Send("Proxout: ");
-            SerialPort.Send(proxHz * 60.0f, 2);
-            SerialPort.Send(" RPM (");
+            SerialPort.Send(proxHz, 2);
+            SerialPort.Send(" Hz (");
             SerialPort.SendLine(proxOk ? "ABOVE 30" : "BELOW 30");
         }
 
