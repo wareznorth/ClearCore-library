@@ -411,6 +411,13 @@ int main(void) {
             proxPulseCount = 0;
             proxWindowStartMs = Milliseconds();
         }
+        // Temporary A-12 switch override for testing:
+        // Closed (asserted) -> force Proxout above 30 Hz, open -> below 30 Hz.
+        if (ConnectorA12.State()) {
+            proxHz = proxMinHz + 1.0f;
+        } else {
+            proxHz = 0.0f;
+        }
         bool proxOk = proxHz > proxMinHz;
         if (SerialPort && (Milliseconds() - proxLogStartMs) >= proxLogIntervalMs) {
             proxLogStartMs = Milliseconds();
