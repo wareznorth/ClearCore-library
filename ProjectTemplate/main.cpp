@@ -710,6 +710,9 @@ int main(void) {
                 }
             }
 
+            // ================================
+            // STALL HOLD RESUME CHECK
+            // ================================
             if (stallHoldActive) {
                 if (stallResumeSource == STALL_RESUME_FULL &&
                     buttonFullmovState == BUTTONFULLMOV_STOPPING &&
