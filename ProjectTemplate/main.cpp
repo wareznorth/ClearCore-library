@@ -470,18 +470,20 @@ int main(void) {
         bool stepsActive = motor.StatusReg().bit.StepsActive;
         bool alertsPresent = motor.StatusReg().bit.AlertsPresent;
         bool motorFaultedWhileStopped = !stepsActive && alertsPresent;
-        if (motorFaultedWhileStopped) {
-            if (Milliseconds() - faultFlashStartMs >= faultFlashIntervalMs) {
-                faultFlashStartMs = Milliseconds();
-                faultFlashState = !faultFlashState;
-            }
-            ConnectorIO1.State(faultFlashState);
-            ConnectorIO3.State(!faultFlashState);
-            if (!faultLogged && SerialPort) {
-                SerialPort.SendLine("Motor faulted while stopped.");
-                faultLogged = true;
-            }
-        } else {
+            if (motorFaultedWhileStopped) {
+                if (Milliseconds() - faultFlashStartMs >= faultFlashIntervalMs) {
+                    faultFlashStartMs = Milliseconds();
+                    faultFlashState = !faultFlashState;
+                }
+                ConnectorIO1.State(faultFlashState);
+                ConnectorIO3.State(!faultFlashState);
+                if (!faultLogged && SerialPort) {
+                    SerialPort.SendLine("Motor faulted while stopped.");
+                    SerialPort.Send("PositionRefCommanded: ");
+                    SerialPort.SendLine(motor.PositionRefCommanded());
+                    faultLogged = true;
+                }
+            } else {
             faultLogged = false;
             faultFlashState = false;
 
