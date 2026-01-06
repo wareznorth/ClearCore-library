@@ -580,6 +580,38 @@ int main(void) {
                     SerialPort.SendLine("Stall recovery complete. Waiting for IO4.");
                 }
             }
+            // ================================
+            // STALL HOLD RESUME CHECK
+            // ================================
+            if (stallHoldActive) {
+                if (stallResumeSource == STALL_RESUME_FULL &&
+                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
+                    buttonRisingEdge) {
+                    stallHoldActive = false;
+                    stallHoldLogged = false;
+                    stallState = STALL_IDLE;
+                    motor.MoveVelocity(
+                        -RpmToPulsesPerSec(
+                            static_cast<int32_t>(buttonFullmovRpmCommand)));
+                    if (SerialPort) {
+                        SerialPort.SendLine("Stall cleared. Resuming Buttonfullmov.");
+                    }
+                } else if (stallResumeSource == STALL_RESUME_HALF &&
+                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
+                           buttonHalfRisingEdge) {
+                    stallHoldActive = false;
+                    stallHoldLogged = false;
+                    stallState = STALL_IDLE;
+                    motor.MoveVelocity(
+                        -RpmToPulsesPerSec(
+                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                    if (SerialPort) {
+                        SerialPort.SendLine("Stall cleared. Resuming ButtonHalfmov.");
+                    }
+                } else if (SerialPort && (buttonRisingEdge || buttonHalfRisingEdge)) {
+                    SerialPort.SendLine("Stall resume blocked: press the original button.");
+                }
+            }
 
             // ================================
             // TORQUE REGULATION (BUTTON MOVES)
@@ -721,38 +753,6 @@ int main(void) {
                 }
             }
 
-            // ================================
-            // STALL HOLD RESUME CHECK
-            // ================================
-            if (stallHoldActive) {
-                if (stallResumeSource == STALL_RESUME_FULL &&
-                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
-                    buttonRisingEdge) {
-                    stallHoldActive = false;
-                    stallHoldLogged = false;
-                    stallState = STALL_IDLE;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonFullmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming Buttonfullmov.");
-                    }
-                } else if (stallResumeSource == STALL_RESUME_HALF &&
-                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
-                           buttonHalfRisingEdge) {
-                    stallHoldActive = false;
-                    stallHoldLogged = false;
-                    stallState = STALL_IDLE;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming ButtonHalfmov.");
-                    }
-                } else if (SerialPort && (buttonRisingEdge || buttonHalfRisingEdge)) {
-                    SerialPort.SendLine("Stall resume blocked: press the original button.");
-                }
-            }
             if (SerialPort) {
                 if (stallHoldActive && !stallHoldLogged) {
                     SerialPort.SendLine("stallHoldActive = true");
