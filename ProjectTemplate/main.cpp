@@ -590,6 +590,7 @@ int main(void) {
                     stallHoldActive = false;
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
+                    buttonFullmovState = BUTTONFULLMOV_RUNNING;
                     motor.MoveVelocity(
                         -RpmToPulsesPerSec(
                             static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -602,6 +603,7 @@ int main(void) {
                     stallHoldActive = false;
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
+                    buttonHalfmovState = BUTTONHALFMOV_RUNNING;
                     motor.MoveVelocity(
                         -RpmToPulsesPerSec(
                             static_cast<int32_t>(buttonHalfmovRpmCommand)));
