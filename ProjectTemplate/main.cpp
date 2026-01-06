@@ -390,6 +390,17 @@ int main(void) {
     DebounceInput enableInput = {ConnectorDI6.State(), ConnectorDI6.State(), Milliseconds()};
 
     while (true) {
+        // Main loop order:
+        // 1) Sample inputs and detect edges (enable, home, buttons).
+        // 2) Update Proxout state/logs and compute proxOk.
+        // 3) Handle enable transitions and motor enable/disable.
+        // 4) Update indicators/rev pulse or fault flash.
+        // 5) Start button moves (full/half) if eligible.
+        // 6) Detect Proxout stall and stop motion if needed.
+        // 7) Run torque regulation (HLFB) during button moves.
+        // 8) Check move completion and start homing if allowed.
+        // 9) Handle stall resume checks.
+        // 10) Advance homing state machine and handle completion/failure.
         // Sample debounced input states (enable, home, button) and compute edges.
         bool enableRequested = ReadEnableDebounced(enableInput);
         homeTripped = ReadHomeTrippedDebounced(homeInput);
