@@ -706,6 +706,7 @@ int main(void) {
                 motor.StepsComplete()) {
                 buttonFullmovState = BUTTONFULLMOV_IDLE;
                 stallResumeSource = STALL_RESUME_NONE;
+                stallHoldActive = false;
                 if (!stallHoldActive) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
@@ -737,6 +738,7 @@ int main(void) {
                 motor.StepsComplete()) {
                 buttonHalfmovState = BUTTONHALFMOV_IDLE;
                 stallResumeSource = STALL_RESUME_NONE;
+                stallHoldActive = false;
                 if (!stallHoldActive) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
