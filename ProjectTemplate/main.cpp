@@ -753,15 +753,6 @@ int main(void) {
                     SerialPort.SendLine("Stall resume blocked: press the original button.");
                 }
             }
-            // Ensure Buttonfullmov stops once the 256000 count target is reached,
-            // even if a stall has occurred and motion was stopped.
-            if (buttonFullmovState == BUTTONFULLMOV_STOPPING) {
-                int32_t delta =
-                    motor.PositionRefCommanded() - buttonFullmovStartPos;
-                if (abs(delta) >= buttonFullmovCounts) {
-                    motor.MoveStopDecel(stopDecel);
-                }
-            }
             if (SerialPort) {
                 if (stallHoldActive && !stallHoldLogged) {
                     SerialPort.SendLine("stallHoldActive = true");
