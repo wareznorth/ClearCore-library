@@ -588,17 +588,36 @@ int main(void) {
                 bool fullComplete = abs(fullDelta) >= buttonFullmovCounts;
                 bool halfComplete = abs(halfDelta) >= buttonHalfmovCounts;
                 stallState = STALL_IDLE;
-                // Only require a stall-hold resume input when the original move
-                // already completed; otherwise allow the move to resume without
-                // blocking homing or other actions.
-                stallHoldActive = fullComplete || halfComplete;
-                if (SerialPort) {
-                    // Emit a status message so operators know if IO4 is required
-                    // to resume motion after the recovery reversal.
-                    SerialPort.SendLine(
-                        stallHoldActive ?
-                        "Stall recovery complete. Waiting for IO4." :
-                        "Stall recovery complete. Resume to continue move.");
+                // Resume the original button move immediately after recovery
+                // when it has not yet reached its completion counts.
+                stallHoldActive = false;
+                stallHoldLogged = false;
+                if (stallResumeSource == STALL_RESUME_FULL &&
+                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
+                    !fullComplete) {
+                    buttonFullmovState = BUTTONFULLMOV_RUNNING;
+                    stallResumed = true;
+                    motor.MoveVelocity(
+                        -RpmToPulsesPerSec(
+                            static_cast<int32_t>(buttonFullmovRpmCommand)));
+                    if (SerialPort) {
+                        SerialPort.SendLine(
+                            "Stall recovery complete. Resuming Buttonfullmov.");
+                    }
+                } else if (stallResumeSource == STALL_RESUME_HALF &&
+                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
+                           !halfComplete) {
+                    buttonHalfmovState = BUTTONHALFMOV_RUNNING;
+                    stallResumed = true;
+                    motor.MoveVelocity(
+                        -RpmToPulsesPerSec(
+                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                    if (SerialPort) {
+                        SerialPort.SendLine(
+                            "Stall recovery complete. Resuming ButtonHalfmov.");
+                    }
+                } else if (SerialPort) {
+                    SerialPort.SendLine("Stall recovery complete.");
                 }
             }
             // ================================
