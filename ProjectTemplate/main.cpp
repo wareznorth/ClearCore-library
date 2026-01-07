@@ -331,6 +331,8 @@ int main(void) {
     float buttonHalfmovRpmCommand = buttonHalfmovRpm;
     int32_t buttonFullmovStartPos = 0;
     int32_t buttonHalfmovStartPos = 0;
+    bool buttonFullmovCompleted = false;
+    bool buttonHalfmovCompleted = false;
     bool stallHoldActive = false;
     bool stallHoldLogged = false;
     StallState stallState = STALL_IDLE;
@@ -528,6 +530,7 @@ int main(void) {
                 proxOk) {
                 buttonFullmovRpmCommand = buttonFullmovRpm;
                 buttonFullmovStartPos = motor.PositionRefCommanded();
+                buttonFullmovCompleted = false;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -545,6 +548,7 @@ int main(void) {
                 proxOk) {
                 buttonHalfmovRpmCommand = buttonHalfmovRpm;
                 buttonHalfmovStartPos = motor.PositionRefCommanded();
+                buttonHalfmovCompleted = false;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -709,6 +713,7 @@ int main(void) {
                 int32_t delta =
                     motor.PositionRefCommanded() - buttonFullmovStartPos;
                 if (abs(delta) >= buttonFullmovCounts) {
+                    buttonFullmovCompleted = true;
                     motor.MoveStopDecel(stopDecel);
                     buttonFullmovState = BUTTONFULLMOV_STOPPING;
                 }
@@ -720,7 +725,7 @@ int main(void) {
                 if (!stallOccurred || stallResumed) {
                     stallHoldActive = false;
                 }
-                if (!stallHoldActive) {
+                if (!stallHoldActive && buttonFullmovCompleted) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
                         homing.homed = true;
@@ -745,6 +750,7 @@ int main(void) {
                 int32_t delta =
                     motor.PositionRefCommanded() - buttonHalfmovStartPos;
                 if (abs(delta) >= buttonHalfmovCounts) {
+                    buttonHalfmovCompleted = true;
                     motor.MoveStopDecel(stopDecel);
                     buttonHalfmovState = BUTTONHALFMOV_STOPPING;
                 }
@@ -756,7 +762,7 @@ int main(void) {
                 if (!stallOccurred || stallResumed) {
                     stallHoldActive = false;
                 }
-                if (!stallHoldActive) {
+                if (!stallHoldActive && buttonHalfmovCompleted) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
                         homing.homed = true;
