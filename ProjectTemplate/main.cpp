@@ -44,8 +44,6 @@
 #define proxWindowMs 1000
 #define proxMinHz 30
 #define proxLogIntervalMs 500
-#define proxStallMs 100
-#define stallReverseCounts 5000
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
@@ -118,17 +116,6 @@ enum ButtonHalfmovState {
     BUTTONHALFMOV_STOPPING
 };
 
-enum StallState {
-    STALL_IDLE,
-    STALL_WAIT_STOP,
-    STALL_REVERSING
-};
-
-enum StallResumeSource {
-    STALL_RESUME_NONE,
-    STALL_RESUME_FULL,
-    STALL_RESUME_HALF
-};
 
 
 struct HomingContext {
@@ -337,12 +324,6 @@ int main(void) {
     uint32_t proxWindowStartMs = Milliseconds();
     float proxHz = 0.0f;
     uint32_t proxLogStartMs = Milliseconds();
-    bool stallHoldActive = false;
-    bool stallHoldLogged = false;
-    StallState stallState = STALL_IDLE;
-    StallResumeSource stallResumeSource = STALL_RESUME_NONE;
-    bool stallOccurred = false;
-    bool stallResumed = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -398,11 +379,9 @@ int main(void) {
         // 3) Handle enable transitions and motor enable/disable.
         // 4) Update indicators/rev pulse or fault flash.
         // 5) Start button moves (full/half) if eligible.
-        // 6) Detect Proxout stall and stop motion if needed.
-        // 7) Run torque regulation (HLFB) during button moves.
-        // 8) Check move completion and start homing if allowed.
-        // 9) Handle stall resume checks.
-        // 10) Advance homing state machine and handle completion/failure.
+        // 6) Run torque regulation (HLFB) during button moves.
+        // 7) Check move completion and start homing if allowed.
+        // 8) Advance homing state machine and handle completion/failure.
         // Sample debounced input states (enable, home, button) and compute edges.
         bool enableRequested = ReadEnableDebounced(enableInput);
         homeTripped = ReadHomeTrippedDebounced(homeInput);
@@ -532,7 +511,6 @@ int main(void) {
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonFullmovRpmCommand)));
                 buttonFullmovState = BUTTONFULLMOV_RUNNING;
-                stallResumeSource = STALL_RESUME_FULL;
                 if (SerialPort) {
                     SerialPort.SendLine("Buttonfullmov started.");
                 }
@@ -549,86 +527,8 @@ int main(void) {
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
                 buttonHalfmovState = BUTTONHALFMOV_RUNNING;
-                stallResumeSource = STALL_RESUME_HALF;
                 if (SerialPort) {
                     SerialPort.SendLine("ButtonHalfmov started.");
-                }
-            }
-            if (stallState == STALL_IDLE &&
-                (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
-                 buttonHalfmovState == BUTTONHALFMOV_RUNNING) &&
-                !ConnectorA12.State()) {
-                motor.MoveStopDecel(stopDecel);
-                buttonFullmovState = BUTTONFULLMOV_STOPPING;
-                buttonHalfmovState = BUTTONHALFMOV_STOPPING;
-                stallHoldActive = true;
-                stallHoldLogged = false;
-                stallState = STALL_WAIT_STOP;
-                stallOccurred = true;
-                stallResumed = false;
-                if (SerialPort) {
-                    SerialPort.SendLine("Proxout stall detected. Motion stopped.");
-                }
-            }
-            if (stallState == STALL_WAIT_STOP && motor.StepsComplete()) {
-                motor.Move(stallReverseCounts);
-                stallState = STALL_REVERSING;
-                if (SerialPort) {
-                    SerialPort.SendLine("Stall recovery: reversing 5000 counts.");
-                }
-            }
-            if (stallState == STALL_REVERSING && motor.StepsComplete()) {
-                // Compare current commanded position against the start position
-                // for each button move to determine whether the move reached its
-                // configured completion counts before the stall occurred.
-                int32_t fullDelta =
-                    motor.PositionRefCommanded() - buttonFullmovStartPos;
-                int32_t halfDelta =
-                    motor.PositionRefCommanded() - buttonHalfmovStartPos;
-                bool fullComplete = abs(fullDelta) >= buttonFullmovCounts;
-                bool halfComplete = abs(halfDelta) >= buttonHalfmovCounts;
-                stallState = STALL_IDLE;
-                // Clear stall hold immediately after recovery.
-                stallHoldActive = false;
-                stallHoldLogged = false;
-                if (SerialPort) {
-                    SerialPort.SendLine("Stall recovery complete.");
-                }
-            }
-            // ================================
-            // STALL HOLD RESUME CHECK
-            // ================================
-            if (stallHoldActive) {
-                if (stallResumeSource == STALL_RESUME_FULL &&
-                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
-                    buttonRisingEdge) {
-                    stallHoldActive = false;
-                    stallHoldLogged = false;
-                    stallState = STALL_IDLE;
-                    buttonFullmovState = BUTTONFULLMOV_RUNNING;
-                    stallResumed = true;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonFullmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming Buttonfullmov.");
-                    }
-                } else if (stallResumeSource == STALL_RESUME_HALF &&
-                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
-                           buttonHalfRisingEdge) {
-                    stallHoldActive = false;
-                    stallHoldLogged = false;
-                    stallState = STALL_IDLE;
-                    buttonHalfmovState = BUTTONHALFMOV_RUNNING;
-                    stallResumed = true;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming ButtonHalfmov.");
-                    }
-                } else if (SerialPort && (buttonRisingEdge || buttonHalfRisingEdge)) {
-                    SerialPort.SendLine("Stall resume blocked: press the original button.");
                 }
             }
 
@@ -722,28 +622,20 @@ int main(void) {
             if (buttonFullmovState == BUTTONFULLMOV_STOPPING &&
                 motor.StepsComplete()) {
                 buttonFullmovState = BUTTONFULLMOV_IDLE;
-                stallResumeSource = STALL_RESUME_NONE;
-                if (!stallOccurred || stallResumed) {
-                    stallHoldActive = false;
-                }
-                if (!stallHoldActive) {
-                    if (homeTripped) {
-                        motor.PositionRefSet(0);
-                        homing.homed = true;
-                        HomingStateEnter(homing, HOMING_COMPLETE);
-                        if (SerialPort) {
-                            SerialPort.SendLine("Home switch already tripped. Homing skipped.");
-                        }
-                    } else {
-                        homing.homed = false;
-                        HomingStateEnter(homing, HOMING_FAST_SEEK);
-                        if (SerialPort) {
-                            SerialPort.SendLine("Homing started after Buttonfullmov.");
-                        }
+                if (homeTripped) {
+                    motor.PositionRefSet(0);
+                    homing.homed = true;
+                    HomingStateEnter(homing, HOMING_COMPLETE);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
+                    }
+                } else {
+                    homing.homed = false;
+                    HomingStateEnter(homing, HOMING_FAST_SEEK);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Homing started after Buttonfullmov.");
                     }
                 }
-                stallOccurred = false;
-                stallResumed = false;
             }
 
             // Detect completion of the ButtonHalfmov distance, then stop and home.
@@ -758,37 +650,19 @@ int main(void) {
             if (buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
                 motor.StepsComplete()) {
                 buttonHalfmovState = BUTTONHALFMOV_IDLE;
-                stallResumeSource = STALL_RESUME_NONE;
-                if (!stallOccurred || stallResumed) {
-                    stallHoldActive = false;
-                }
-                if (!stallHoldActive) {
-                    if (homeTripped) {
-                        motor.PositionRefSet(0);
-                        homing.homed = true;
-                        HomingStateEnter(homing, HOMING_COMPLETE);
-                        if (SerialPort) {
-                            SerialPort.SendLine("Home switch already tripped. Homing skipped.");
-                        }
-                    } else {
-                        homing.homed = false;
-                        HomingStateEnter(homing, HOMING_FAST_SEEK);
-                        if (SerialPort) {
-                            SerialPort.SendLine("Homing started after ButtonHalfmov.");
-                        }
+                if (homeTripped) {
+                    motor.PositionRefSet(0);
+                    homing.homed = true;
+                    HomingStateEnter(homing, HOMING_COMPLETE);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Home switch already tripped. Homing skipped.");
                     }
-                }
-                stallOccurred = false;
-                stallResumed = false;
-            }
-
-            if (SerialPort) {
-                if (stallHoldActive && !stallHoldLogged) {
-                    SerialPort.SendLine("stallHoldActive = true");
-                    stallHoldLogged = true;
-                } else if (!stallHoldActive && stallHoldLogged) {
-                    SerialPort.SendLine("stallHoldActive = false");
-                    stallHoldLogged = false;
+                } else {
+                    homing.homed = false;
+                    HomingStateEnter(homing, HOMING_FAST_SEEK);
+                    if (SerialPort) {
+                        SerialPort.SendLine("Homing started after ButtonHalfmov.");
+                    }
                 }
             }
 
