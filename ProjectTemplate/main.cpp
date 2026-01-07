@@ -341,6 +341,8 @@ int main(void) {
     bool stallHoldLogged = false;
     StallState stallState = STALL_IDLE;
     StallResumeSource stallResumeSource = STALL_RESUME_NONE;
+    bool stallOccurred = false;
+    bool stallResumed = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -562,6 +564,8 @@ int main(void) {
                 stallHoldActive = true;
                 stallHoldLogged = false;
                 stallState = STALL_WAIT_STOP;
+                stallOccurred = true;
+                stallResumed = false;
                 if (SerialPort) {
                     SerialPort.SendLine("Proxout stall detected. Motion stopped.");
                 }
@@ -591,6 +595,7 @@ int main(void) {
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
                     buttonFullmovState = BUTTONFULLMOV_RUNNING;
+                    stallResumed = true;
                     motor.MoveVelocity(
                         -RpmToPulsesPerSec(
                             static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -604,6 +609,7 @@ int main(void) {
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
                     buttonHalfmovState = BUTTONHALFMOV_RUNNING;
+                    stallResumed = true;
                     motor.MoveVelocity(
                         -RpmToPulsesPerSec(
                             static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -706,7 +712,9 @@ int main(void) {
                 motor.StepsComplete()) {
                 buttonFullmovState = BUTTONFULLMOV_IDLE;
                 stallResumeSource = STALL_RESUME_NONE;
-                stallHoldActive = false;
+                if (!stallOccurred || stallResumed) {
+                    stallHoldActive = false;
+                }
                 if (!stallHoldActive) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
@@ -723,6 +731,8 @@ int main(void) {
                         }
                     }
                 }
+                stallOccurred = false;
+                stallResumed = false;
             }
 
             // Detect completion of the ButtonHalfmov distance, then stop and home.
@@ -738,7 +748,9 @@ int main(void) {
                 motor.StepsComplete()) {
                 buttonHalfmovState = BUTTONHALFMOV_IDLE;
                 stallResumeSource = STALL_RESUME_NONE;
-                stallHoldActive = false;
+                if (!stallOccurred || stallResumed) {
+                    stallHoldActive = false;
+                }
                 if (!stallHoldActive) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
@@ -755,6 +767,8 @@ int main(void) {
                         }
                     }
                 }
+                stallOccurred = false;
+                stallResumed = false;
             }
 
             if (SerialPort) {
