@@ -578,6 +578,9 @@ int main(void) {
                 }
             }
             if (stallState == STALL_REVERSING && motor.StepsComplete()) {
+                // Compare current commanded position against the start position
+                // for each button move to determine whether the move reached its
+                // configured completion counts before the stall occurred.
                 int32_t fullDelta =
                     motor.PositionRefCommanded() - buttonFullmovStartPos;
                 int32_t halfDelta =
@@ -585,8 +588,13 @@ int main(void) {
                 bool fullComplete = abs(fullDelta) >= buttonFullmovCounts;
                 bool halfComplete = abs(halfDelta) >= buttonHalfmovCounts;
                 stallState = STALL_IDLE;
+                // Only require a stall-hold resume input when the original move
+                // already completed; otherwise allow the move to resume without
+                // blocking homing or other actions.
                 stallHoldActive = fullComplete || halfComplete;
                 if (SerialPort) {
+                    // Emit a status message so operators know if IO4 is required
+                    // to resume motion after the recovery reversal.
                     SerialPort.SendLine(
                         stallHoldActive ?
                         "Stall recovery complete. Waiting for IO4." :
