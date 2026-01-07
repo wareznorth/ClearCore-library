@@ -588,35 +588,10 @@ int main(void) {
                 bool fullComplete = abs(fullDelta) >= buttonFullmovCounts;
                 bool halfComplete = abs(halfDelta) >= buttonHalfmovCounts;
                 stallState = STALL_IDLE;
-                // Resume the original button move immediately after recovery
-                // when it has not yet reached its completion counts.
+                // Clear stall hold immediately after recovery.
                 stallHoldActive = false;
                 stallHoldLogged = false;
-                if (stallResumeSource == STALL_RESUME_FULL &&
-                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
-                    !fullComplete) {
-                    buttonFullmovState = BUTTONFULLMOV_RUNNING;
-                    stallResumed = true;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonFullmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine(
-                            "Stall recovery complete. Resuming Buttonfullmov.");
-                    }
-                } else if (stallResumeSource == STALL_RESUME_HALF &&
-                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
-                           !halfComplete) {
-                    buttonHalfmovState = BUTTONHALFMOV_RUNNING;
-                    stallResumed = true;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine(
-                            "Stall recovery complete. Resuming ButtonHalfmov.");
-                    }
-                } else if (SerialPort) {
+                if (SerialPort) {
                     SerialPort.SendLine("Stall recovery complete.");
                 }
             }
