@@ -578,10 +578,19 @@ int main(void) {
                 }
             }
             if (stallState == STALL_REVERSING && motor.StepsComplete()) {
+                int32_t fullDelta =
+                    motor.PositionRefCommanded() - buttonFullmovStartPos;
+                int32_t halfDelta =
+                    motor.PositionRefCommanded() - buttonHalfmovStartPos;
+                bool fullComplete = abs(fullDelta) >= buttonFullmovCounts;
+                bool halfComplete = abs(halfDelta) >= buttonHalfmovCounts;
                 stallState = STALL_IDLE;
-                stallHoldActive = true;
+                stallHoldActive = fullComplete || halfComplete;
                 if (SerialPort) {
-                    SerialPort.SendLine("Stall recovery complete. Waiting for IO4.");
+                    SerialPort.SendLine(
+                        stallHoldActive ?
+                        "Stall recovery complete. Waiting for IO4." :
+                        "Stall recovery complete. Resume to continue move.");
                 }
             }
             // ================================
