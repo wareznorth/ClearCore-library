@@ -597,36 +597,48 @@ int main(void) {
             // STALL HOLD RESUME CHECK
             // ================================
             if (stallHoldActive) {
-                if (stallResumeSource == STALL_RESUME_FULL &&
-                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
-                    buttonRisingEdge) {
+                if (buttonRisingEdge || buttonHalfRisingEdge) {
+                    int32_t fullDelta =
+                        motor.PositionRefCommanded() - buttonFullmovStartPos;
+                    int32_t halfDelta =
+                        motor.PositionRefCommanded() - buttonHalfmovStartPos;
+                    bool pastHalfCounts =
+                        abs(fullDelta) >= buttonHalfmovCounts ||
+                        abs(halfDelta) >= buttonHalfmovCounts;
+                    bool resumeFullmov = pastHalfCounts || buttonRisingEdge;
+
                     stallHoldActive = false;
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
-                    buttonFullmovState = BUTTONFULLMOV_RUNNING;
                     stallResumed = true;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonFullmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming Buttonfullmov.");
+
+                    if (resumeFullmov) {
+                        buttonFullmovState = BUTTONFULLMOV_RUNNING;
+                        buttonHalfmovState = BUTTONHALFMOV_IDLE;
+                        stallResumeSource = STALL_RESUME_FULL;
+                        buttonFullmovStartPos = motor.PositionRefCommanded();
+                        buttonFullmovCompleted = false;
+                        motor.MoveVelocity(
+                            -RpmToPulsesPerSec(
+                                static_cast<int32_t>(buttonFullmovRpmCommand)));
+                        if (SerialPort) {
+                            SerialPort.SendLine(
+                                "Stall cleared. Resuming Buttonfullmov.");
+                        }
+                    } else {
+                        buttonHalfmovState = BUTTONHALFMOV_RUNNING;
+                        buttonFullmovState = BUTTONFULLMOV_IDLE;
+                        stallResumeSource = STALL_RESUME_HALF;
+                        buttonHalfmovStartPos = motor.PositionRefCommanded();
+                        buttonHalfmovCompleted = false;
+                        motor.MoveVelocity(
+                            -RpmToPulsesPerSec(
+                                static_cast<int32_t>(buttonHalfmovRpmCommand)));
+                        if (SerialPort) {
+                            SerialPort.SendLine(
+                                "Stall cleared. Resuming ButtonHalfmov.");
+                        }
                     }
-                } else if (stallResumeSource == STALL_RESUME_HALF &&
-                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
-                           buttonHalfRisingEdge) {
-                    stallHoldActive = false;
-                    stallHoldLogged = false;
-                    stallState = STALL_IDLE;
-                    buttonHalfmovState = BUTTONHALFMOV_RUNNING;
-                    stallResumed = true;
-                    motor.MoveVelocity(
-                        -RpmToPulsesPerSec(
-                            static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming ButtonHalfmov.");
-                    }
-                } else if (SerialPort && (buttonRisingEdge || buttonHalfRisingEdge)) {
-                    SerialPort.SendLine("Stall resume blocked: press the original button.");
                 }
             }
 
