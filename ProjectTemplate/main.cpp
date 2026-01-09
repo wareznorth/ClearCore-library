@@ -377,6 +377,10 @@ int main(void) {
         HomingUpdate(homing, homeTripped);
     }
 
+    if (homing.state == HOMING_COMPLETE) {
+        buttonFullmovStartPos = motor.PositionRefCommanded();
+        buttonHalfmovStartPos = motor.PositionRefCommanded();
+    }
     if (SerialPort) {
         SerialPort.SendLine(homing.state == HOMING_COMPLETE ?
                             "Power-up homing complete." :
@@ -453,6 +457,8 @@ int main(void) {
             // If home switch is already tripped, skip motion and set home.
             if (homeTripped) {
                 motor.PositionRefSet(0);
+                buttonFullmovStartPos = 0;
+                buttonHalfmovStartPos = 0;
                 homing.homed = true;
                 HomingStateEnter(homing, HOMING_COMPLETE);
                 if (SerialPort) {
@@ -529,7 +535,6 @@ int main(void) {
                 buttonHalfmovState == BUTTONHALFMOV_IDLE &&
                 proxOk) {
                 buttonFullmovRpmCommand = buttonFullmovRpm;
-                buttonFullmovStartPos = motor.PositionRefCommanded();
                 buttonFullmovCompleted = false;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
@@ -547,7 +552,6 @@ int main(void) {
                 buttonFullmovState == BUTTONFULLMOV_IDLE &&
                 proxOk) {
                 buttonHalfmovRpmCommand = buttonHalfmovRpm;
-                buttonHalfmovStartPos = motor.PositionRefCommanded();
                 buttonHalfmovCompleted = false;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
@@ -606,11 +610,6 @@ int main(void) {
                         abs(fullDelta) >= buttonHalfmovCounts ||
                         abs(halfDelta) >= buttonHalfmovCounts;
                     bool resumeFullmov = pastHalfCounts || buttonRisingEdge;
-                    bool wasFullStopping =
-                        buttonFullmovState == BUTTONFULLMOV_STOPPING;
-                    bool wasHalfStopping =
-                        buttonHalfmovState == BUTTONHALFMOV_STOPPING;
-
                     stallHoldActive = false;
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
@@ -620,9 +619,6 @@ int main(void) {
                         buttonFullmovState = BUTTONFULLMOV_RUNNING;
                         buttonHalfmovState = BUTTONHALFMOV_IDLE;
                         stallResumeSource = STALL_RESUME_FULL;
-                        if (wasHalfStopping) {
-                            buttonFullmovStartPos = buttonHalfmovStartPos;
-                        }
                         buttonFullmovCompleted = false;
                         motor.MoveVelocity(
                             -RpmToPulsesPerSec(
@@ -635,9 +631,6 @@ int main(void) {
                         buttonHalfmovState = BUTTONHALFMOV_RUNNING;
                         buttonFullmovState = BUTTONFULLMOV_IDLE;
                         stallResumeSource = STALL_RESUME_HALF;
-                        if (wasFullStopping) {
-                            buttonHalfmovStartPos = buttonFullmovStartPos;
-                        }
                         buttonHalfmovCompleted = false;
                         motor.MoveVelocity(
                             -RpmToPulsesPerSec(
@@ -748,6 +741,8 @@ int main(void) {
                 if (!stallHoldActive && buttonFullmovCompleted) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
+                        buttonFullmovStartPos = 0;
+                        buttonHalfmovStartPos = 0;
                         homing.homed = true;
                         HomingStateEnter(homing, HOMING_COMPLETE);
                         if (SerialPort) {
@@ -785,6 +780,8 @@ int main(void) {
                 if (!stallHoldActive && buttonHalfmovCompleted) {
                     if (homeTripped) {
                         motor.PositionRefSet(0);
+                        buttonFullmovStartPos = 0;
+                        buttonHalfmovStartPos = 0;
                         homing.homed = true;
                         HomingStateEnter(homing, HOMING_COMPLETE);
                         if (SerialPort) {
@@ -819,6 +816,8 @@ int main(void) {
                 if (SerialPort) {
                     SerialPort.SendLine("Homing complete.");
                 }
+                buttonFullmovStartPos = motor.PositionRefCommanded();
+                buttonHalfmovStartPos = motor.PositionRefCommanded();
                 HomingStateEnter(homing, HOMING_IDLE);
             } else if (homing.state == HOMING_FAILED) {
                 if (SerialPort) {
