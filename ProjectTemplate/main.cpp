@@ -606,6 +606,10 @@ int main(void) {
                         abs(fullDelta) >= buttonHalfmovCounts ||
                         abs(halfDelta) >= buttonHalfmovCounts;
                     bool resumeFullmov = pastHalfCounts || buttonRisingEdge;
+                    bool wasFullStopping =
+                        buttonFullmovState == BUTTONFULLMOV_STOPPING;
+                    bool wasHalfStopping =
+                        buttonHalfmovState == BUTTONHALFMOV_STOPPING;
 
                     stallHoldActive = false;
                     stallHoldLogged = false;
@@ -616,7 +620,9 @@ int main(void) {
                         buttonFullmovState = BUTTONFULLMOV_RUNNING;
                         buttonHalfmovState = BUTTONHALFMOV_IDLE;
                         stallResumeSource = STALL_RESUME_FULL;
-                        buttonFullmovStartPos = motor.PositionRefCommanded();
+                        if (wasHalfStopping) {
+                            buttonFullmovStartPos = buttonHalfmovStartPos;
+                        }
                         buttonFullmovCompleted = false;
                         motor.MoveVelocity(
                             -RpmToPulsesPerSec(
@@ -629,7 +635,9 @@ int main(void) {
                         buttonHalfmovState = BUTTONHALFMOV_RUNNING;
                         buttonFullmovState = BUTTONFULLMOV_IDLE;
                         stallResumeSource = STALL_RESUME_HALF;
-                        buttonHalfmovStartPos = motor.PositionRefCommanded();
+                        if (wasFullStopping) {
+                            buttonHalfmovStartPos = buttonFullmovStartPos;
+                        }
                         buttonHalfmovCompleted = false;
                         motor.MoveVelocity(
                             -RpmToPulsesPerSec(
