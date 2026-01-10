@@ -596,6 +596,16 @@ int main(void) {
                 if (SerialPort) {
                     SerialPort.SendLine("Stall recovery complete. Waiting for button.");
                 }
+                if (homeTripped) {
+                    stallHoldActive = false;
+                    stallHoldLogged = false;
+                    homing.homed = false;
+                    HomingStateEnter(homing, HOMING_BACKOFF);
+                    if (SerialPort) {
+                        SerialPort.SendLine(
+                            "Home switch tripped during stall recovery. Homing started.");
+                    }
+                }
             }
             // ================================
             // STALL HOLD RESUME CHECK
