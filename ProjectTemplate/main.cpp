@@ -344,6 +344,8 @@ int main(void) {
     bool faultLogged = false;
     uint32_t proxWindowStartMs = Milliseconds();
     float proxHz = 0.0f;
+    bool proxPrevState = ConnectorA11.State();
+    uint32_t proxPulseCount = 0;
     uint32_t proxLogStartMs = Milliseconds();
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
@@ -393,6 +395,7 @@ int main(void) {
 
     // Configure DI-6 as a digital input for the enable switch.
     ConnectorDI6.Mode(Connector::INPUT_DIGITAL);
+    ConnectorA11.Mode(Connector::INPUT_DIGITAL);
     // Use DI-6 as the motor enable connector.
     motor.EnableConnector(CLEARCORE_PIN_DI6);
     DebounceInput enableInput = {ConnectorDI6.State(), ConnectorDI6.State(), Milliseconds()};
@@ -422,18 +425,25 @@ int main(void) {
         buttonPrevState = buttonPressed;
         buttonHalfPrevState = buttonHalfPressed;
 
-        // Update proximity sensor pulse frequency (Proxout on A-12).
+        // Update proximity sensor pulse frequency (Proxout on A-11).
         uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
         if (proxElapsedMs >= proxWindowMs) {
-            proxHz = 0.0f;
+            if (proxElapsedMs > 0) {
+                proxHz = (proxPulseCount * 1000.0f) / proxElapsedMs;
+            } else {
+                proxHz = 0.0f;
+            }
+            proxPulseCount = 0;
             proxWindowStartMs = Milliseconds();
         }
-        // Temporary A-12 switch override for testing:
-        // Closed (asserted) -> force Proxout above 30 Hz, open -> below 30 Hz.
+        bool proxState = ConnectorA11.State();
+        if (proxState && !proxPrevState) {
+            proxPulseCount++;
+        }
+        proxPrevState = proxState;
+        // A-12 override switch: assert to force Proxout above threshold.
         if (ConnectorA12.State()) {
             proxHz = proxMinHz + 1.0f;
-        } else {
-            proxHz = 0.0f;
         }
         bool proxOk = proxHz > proxMinHz;
         if (SerialPort && (Milliseconds() - proxLogStartMs) >= proxLogIntervalMs) {
