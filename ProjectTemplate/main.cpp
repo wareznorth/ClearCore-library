@@ -415,6 +415,7 @@ int main(void) {
         // Closed (asserted) -> force Proxout above 30 Hz, open -> below 30 Hz.
         if (ConnectorA12.State()) {
             proxHz = proxMinHz + 1.0f;
+            proxLastPulseMs = Milliseconds();
         } else {
             proxHz = 0.0f;
         }
