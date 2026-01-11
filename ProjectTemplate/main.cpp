@@ -329,10 +329,8 @@ int main(void) {
     bool faultFlashState = false;
     bool faultLogged = false;
     uint32_t proxWindowStartMs = Milliseconds();
-    uint32_t proxPulseCount = 0;
     float proxHz = 0.0f;
     uint32_t proxLogStartMs = Milliseconds();
-    uint32_t proxLastPulseMs = Milliseconds();
     bool stallHoldActive = false;
     bool stallHoldLogged = false;
     StallState stallState = STALL_IDLE;
@@ -399,23 +397,15 @@ int main(void) {
         buttonHalfPrevState = buttonHalfPressed;
 
         // Update proximity sensor pulse frequency (Proxout on A-12).
-        SysConnectorState proxMask;
-        proxMask.bit.CLEARCORE_PIN_A12 = 1;
-        if (InputMgr.InputsRisen(proxMask).bit.CLEARCORE_PIN_A12) {
-            proxPulseCount++;
-            proxLastPulseMs = Milliseconds();
-        }
         uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
         if (proxElapsedMs >= proxWindowMs) {
-            proxHz = (proxPulseCount * 1000.0f) / proxElapsedMs;
-            proxPulseCount = 0;
+            proxHz = 0.0f;
             proxWindowStartMs = Milliseconds();
         }
         // Temporary A-12 switch override for testing:
         // Closed (asserted) -> force Proxout above 30 Hz, open -> below 30 Hz.
         if (ConnectorA12.State()) {
             proxHz = proxMinHz + 1.0f;
-            proxLastPulseMs = Milliseconds();
         } else {
             proxHz = 0.0f;
         }
@@ -543,7 +533,7 @@ int main(void) {
             if (stallState == STALL_IDLE &&
                 (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
                  buttonHalfmovState == BUTTONHALFMOV_RUNNING) &&
-                (Milliseconds() - proxLastPulseMs >= proxStallMs)) {
+                !ConnectorA12.State()) {
                 motor.MoveStopDecel(stopDecel);
                 buttonFullmovState = BUTTONFULLMOV_STOPPING;
                 buttonHalfmovState = BUTTONHALFMOV_STOPPING;
