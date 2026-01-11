@@ -658,6 +658,7 @@ int main(void) {
             if (buttonFullmovState == BUTTONFULLMOV_STOPPING &&
                 motor.StepsComplete()) {
                 buttonFullmovState = BUTTONFULLMOV_IDLE;
+                stallResumeSource = STALL_RESUME_NONE;
                 if (SerialPort) {
                     SerialPort.Send("Buttonfullmov complete. PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
@@ -692,6 +693,7 @@ int main(void) {
             if (buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
                 motor.StepsComplete()) {
                 buttonHalfmovState = BUTTONHALFMOV_IDLE;
+                stallResumeSource = STALL_RESUME_NONE;
                 if (SerialPort) {
                     SerialPort.Send("ButtonHalfmov complete. PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
@@ -715,7 +717,9 @@ int main(void) {
             }
 
             if (stallHoldActive) {
-                if (stallResumeSource == STALL_RESUME_FULL && buttonRisingEdge) {
+                if (stallResumeSource == STALL_RESUME_FULL &&
+                    buttonFullmovState == BUTTONFULLMOV_STOPPING &&
+                    buttonRisingEdge) {
                     stallHoldActive = false;
                     stallHoldLogged = false;
                     stallState = STALL_IDLE;
@@ -726,6 +730,7 @@ int main(void) {
                         SerialPort.SendLine("Stall cleared. Resuming Buttonfullmov.");
                     }
                 } else if (stallResumeSource == STALL_RESUME_HALF &&
+                           buttonHalfmovState == BUTTONHALFMOV_STOPPING &&
                            buttonHalfRisingEdge) {
                     stallHoldActive = false;
                     stallHoldLogged = false;
@@ -736,6 +741,8 @@ int main(void) {
                     if (SerialPort) {
                         SerialPort.SendLine("Stall cleared. Resuming ButtonHalfmov.");
                     }
+                } else if (SerialPort && (buttonRisingEdge || buttonHalfRisingEdge)) {
+                    SerialPort.SendLine("Stall resume blocked: press the original button.");
                 }
             }
             if (SerialPort) {
