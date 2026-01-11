@@ -41,10 +41,11 @@
 #define revPulseWidthMs 50
 #define hlfbReportMs 100
 #define faultFlashIntervalMs 250
-#define proxWindowMs 1000
+#define proxWindowMs 100
 #define proxMinHz 5
 #define proxLogIntervalMs 500
 #define stallReverseCounts 5000
+#define proxZeroWindowsForStall 2
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
@@ -347,6 +348,7 @@ int main(void) {
     bool faultLogged = false;
     uint32_t proxWindowStartMs = Milliseconds();
     float proxHz = 0.0f;
+    uint8_t proxZeroWindows = 0;
     bool proxPrevState = ConnectorA11.State();
     uint32_t proxPulseCount = 0;
     uint32_t proxLogStartMs = Milliseconds();
@@ -434,6 +436,7 @@ int main(void) {
         proxPrevState = proxState;
         // Update proximity sensor pulse frequency (Proxout on A-11).
         uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
+        bool proxWindowUpdated = false;
         if (proxElapsedMs >= proxWindowMs) {
             if (proxElapsedMs > 0) {
                 proxHz = (proxPulseCount * 1000.0f) / proxElapsedMs;
@@ -442,10 +445,20 @@ int main(void) {
             }
             proxPulseCount = 0;
             proxWindowStartMs = Milliseconds();
+            proxWindowUpdated = true;
         }
         // A-12 override switch: assert to force Proxout above threshold.
         if (ConnectorA12.State()) {
             proxHz = proxMinHz + 1.0f;
+        }
+        if (proxWindowUpdated || ConnectorA12.State()) {
+            if (proxHz == 0.0f) {
+                if (proxZeroWindows < proxZeroWindowsForStall) {
+                    proxZeroWindows++;
+                }
+            } else {
+                proxZeroWindows = 0;
+            }
         }
         bool proxOk = proxHz > proxMinHz;
         if (SerialPort && (Milliseconds() - proxLogStartMs) >= proxLogIntervalMs) {
@@ -578,7 +591,7 @@ int main(void) {
             if (stallState == STALL_IDLE &&
                 (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
                  buttonHalfmovState == BUTTONHALFMOV_RUNNING) &&
-                proxHz == 0.0f) {
+                proxZeroWindows >= proxZeroWindowsForStall) {
                 motor.MoveStopDecel(stopDecel);
                 if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                     buttonFullmovState = BUTTONFULLMOV_STOPPING;
@@ -592,7 +605,7 @@ int main(void) {
                 stallOccurred = true;
                 stallResumed = false;
                 if (SerialPort) {
-                    SerialPort.SendLine("Proxout 0 Hz. Motion stopped.");
+                    SerialPort.SendLine("Proxout 0 Hz windowed. Motion stopped.");
                 }
             }
             if (stallState == STALL_WAIT_STOP && motor.StepsComplete()) {
