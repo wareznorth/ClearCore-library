@@ -426,6 +426,11 @@ int main(void) {
         buttonHalfPrevState = buttonHalfPressed;
 
         // Update proximity sensor pulse frequency (Proxout on A-11).
+        bool proxState = ConnectorA11.State();
+        if (proxState && !proxPrevState) {
+            proxPulseCount++;
+        }
+        proxPrevState = proxState;
         uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
         if (proxElapsedMs >= proxWindowMs) {
             if (proxElapsedMs > 0) {
@@ -436,11 +441,6 @@ int main(void) {
             proxPulseCount = 0;
             proxWindowStartMs = Milliseconds();
         }
-        bool proxState = ConnectorA11.State();
-        if (proxState && !proxPrevState) {
-            proxPulseCount++;
-        }
-        proxPrevState = proxState;
         // A-12 override switch: assert to force Proxout above threshold.
         if (ConnectorA12.State()) {
             proxHz = proxMinHz + 1.0f;
