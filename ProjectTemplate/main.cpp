@@ -42,7 +42,7 @@
 #define hlfbReportMs 100
 #define faultFlashIntervalMs 250
 #define proxWindowMs 1000
-#define proxMinHz 30
+#define proxMinHz 5
 #define proxLogIntervalMs 500
 #define stallReverseCounts 5000
 
@@ -453,7 +453,7 @@ int main(void) {
             SerialPort.Send("Proxout: ");
             SerialPort.Send(proxHz, 2);
             SerialPort.Send(" Hz (");
-            SerialPort.SendLine(proxOk ? "ABOVE 30" : "BELOW 30");
+            SerialPort.SendLine(proxOk ? "ABOVE 5" : "BELOW 5");
         }
 
         // Handle enable switch transitions: enable motor and start/skip homing,
@@ -578,7 +578,7 @@ int main(void) {
             if (stallState == STALL_IDLE &&
                 (buttonFullmovState == BUTTONFULLMOV_RUNNING ||
                  buttonHalfmovState == BUTTONHALFMOV_RUNNING) &&
-                !proxOk) {
+                proxHz == 0.0f) {
                 motor.MoveStopDecel(stopDecel);
                 if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                     buttonFullmovState = BUTTONFULLMOV_STOPPING;
@@ -592,7 +592,7 @@ int main(void) {
                 stallOccurred = true;
                 stallResumed = false;
                 if (SerialPort) {
-                    SerialPort.SendLine("Proxout below 30 Hz. Motion stopped.");
+                    SerialPort.SendLine("Proxout 0 Hz. Motion stopped.");
                 }
             }
             if (stallState == STALL_WAIT_STOP && motor.StepsComplete()) {
