@@ -124,11 +124,6 @@ enum StallState {
     STALL_REVERSING
 };
 
-enum StallResumeSource {
-    STALL_RESUME_NONE,
-    STALL_RESUME_FULL,
-    STALL_RESUME_HALF
-};
 
 struct HomingContext {
     HomingState state;
@@ -340,7 +335,6 @@ int main(void) {
     uint32_t proxLastPulseMs = Milliseconds();
     bool stallHoldActive = false;
     StallState stallState = STALL_IDLE;
-    StallResumeSource stallResumeSource = STALL_RESUME_NONE;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -517,7 +511,6 @@ int main(void) {
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonFullmovRpmCommand)));
                 buttonFullmovState = BUTTONFULLMOV_RUNNING;
-                stallResumeSource = STALL_RESUME_FULL;
                 if (SerialPort) {
                     SerialPort.SendLine("Buttonfullmov started.");
                 }
@@ -534,7 +527,6 @@ int main(void) {
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
                 buttonHalfmovState = BUTTONHALFMOV_RUNNING;
-                stallResumeSource = STALL_RESUME_HALF;
                 if (SerialPort) {
                     SerialPort.SendLine("ButtonHalfmov started.");
                 }
@@ -713,26 +705,20 @@ int main(void) {
                 }
             }
 
-            if (stallHoldActive) {
-                if (stallResumeSource == STALL_RESUME_FULL && buttonRisingEdge) {
-                    stallHoldActive = false;
-                    stallState = STALL_IDLE;
+            if (stallHoldActive && buttonRisingEdge) {
+                stallHoldActive = false;
+                stallState = STALL_IDLE;
+                if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                     motor.MoveVelocity(
                         -RpmToPulsesPerSec(
                             static_cast<int32_t>(buttonFullmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming Buttonfullmov.");
-                    }
-                } else if (stallResumeSource == STALL_RESUME_HALF &&
-                           buttonHalfRisingEdge) {
-                    stallHoldActive = false;
-                    stallState = STALL_IDLE;
+                } else if (buttonHalfmovState == BUTTONHALFMOV_RUNNING) {
                     motor.MoveVelocity(
                         -RpmToPulsesPerSec(
                             static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                    if (SerialPort) {
-                        SerialPort.SendLine("Stall cleared. Resuming ButtonHalfmov.");
-                    }
+                }
+                if (SerialPort) {
+                    SerialPort.SendLine("Stall cleared. Resuming button move.");
                 }
             }
 
