@@ -41,7 +41,7 @@
 #define revPulseWidthMs 50
 #define hlfbReportMs 100
 #define faultFlashIntervalMs 250
-#define proxWindowMs 1000
+#define proxWindowMs 100
 #define proxMinHz 5
 #define proxLogIntervalMs 500
 #define stallReverseCounts 5000
