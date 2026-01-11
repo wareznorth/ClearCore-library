@@ -334,6 +334,7 @@ int main(void) {
     uint32_t proxLogStartMs = Milliseconds();
     uint32_t proxLastPulseMs = Milliseconds();
     bool stallHoldActive = false;
+    bool stallHoldLogged = false;
     StallState stallState = STALL_IDLE;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
@@ -539,6 +540,7 @@ int main(void) {
                 buttonFullmovState = BUTTONFULLMOV_STOPPING;
                 buttonHalfmovState = BUTTONHALFMOV_STOPPING;
                 stallHoldActive = true;
+                stallHoldLogged = false;
                 stallState = STALL_WAIT_STOP;
                 if (SerialPort) {
                     SerialPort.SendLine("Proxout stall detected. Motion stopped.");
@@ -707,6 +709,7 @@ int main(void) {
 
             if (stallHoldActive && buttonRisingEdge) {
                 stallHoldActive = false;
+                stallHoldLogged = false;
                 stallState = STALL_IDLE;
                 if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
                     motor.MoveVelocity(
@@ -719,6 +722,15 @@ int main(void) {
                 }
                 if (SerialPort) {
                     SerialPort.SendLine("Stall cleared. Resuming button move.");
+                }
+            }
+            if (SerialPort) {
+                if (stallHoldActive && !stallHoldLogged) {
+                    SerialPort.SendLine("stallHoldActive = true");
+                    stallHoldLogged = true;
+                } else if (!stallHoldActive && stallHoldLogged) {
+                    SerialPort.SendLine("stallHoldActive = false");
+                    stallHoldLogged = false;
                 }
             }
 
