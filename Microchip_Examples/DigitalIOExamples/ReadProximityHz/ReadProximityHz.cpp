@@ -6,12 +6,12 @@
  *    ClearCore digital input using a rising-edge interrupt.
  *
  * Description:
- *    This example attaches an interrupt on ConnectorA12. Each rising edge
+ *    This example attaches an interrupt on ConnectorA11. Each rising edge
  *    captures the elapsed microseconds since the previous rising edge. The
  *    period is converted to Hz and printed to the USB serial port.
  *
  * Requirements:
- * ** A proximity sensor or digital signal source connected to A-12.
+ * ** A proximity sensor or digital signal source connected to A-11.
  *
  * Links:
  * ** ClearCore Documentation: https://teknic-inc.github.io/ClearCore-library/
@@ -25,7 +25,7 @@
 #include "ClearCore.h"
 
 // Proximity sensor input pin.
-#define ProximityInput ConnectorA12
+#define ProximityInput ConnectorA11
 
 // Select the baud rate to match the target serial device.
 #define baudRate 9600
@@ -44,7 +44,7 @@ void ProximityRiseCallback();
 int main() {
     ProximityInput.Mode(Connector::INPUT_DIGITAL);
 
-    // Set up rising-edge interrupt on A-12.
+    // Set up rising-edge interrupt on A-11.
     ProximityInput.InterruptHandlerSet(ProximityRiseCallback,
                                        InputManager::RISING, false);
     ProximityInput.InterruptEnable(true);
@@ -71,7 +71,7 @@ int main() {
 
         if (hasUpdate && localPeriod > 0) {
             float frequencyHz = 1000000.0f / static_cast<float>(localPeriod);
-            SerialPort.Send("A12 frequency (Hz): ");
+            SerialPort.Send("A11 frequency (Hz): ");
             SerialPort.SendLine(frequencyHz);
         }
 
