@@ -47,6 +47,13 @@
 #define stallReverseCounts 5000
 #define proxZeroWindowsForStall 2
 
+// Proximity measurement via rising-edge interrupt on A-11.
+volatile uint32_t proxLastRiseUs = 0;
+volatile uint32_t proxPeriodUs = 0;
+volatile bool proxPeriodUpdated = false;
+
+static void ProximityRiseCallback();
+
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 200
 #define buttonFullmovCounts 256000
@@ -141,6 +148,16 @@ struct HomingContext {
 static void HomingStateEnter(HomingContext &ctx, HomingState nextState) {
     ctx.state = nextState;
     ctx.stateStartMs = Milliseconds();
+}
+
+// The function to be triggered on a rising-edge interrupt.
+static void ProximityRiseCallback() {
+    uint32_t nowUs = Microseconds();
+    if (proxLastRiseUs != 0) {
+        proxPeriodUs = nowUs - proxLastRiseUs;
+        proxPeriodUpdated = true;
+    }
+    proxLastRiseUs = nowUs;
 }
 
 static int32_t RpmToPulsesPerSec(int32_t rpm) {
@@ -282,6 +299,10 @@ int main(void) {
 
     // Configure A-11 as a digital input for the proximity sensor pulse output.
     ConnectorA11.Mode(Connector::INPUT_DIGITAL);
+    // Set up rising-edge interrupt on A-11 for proximity frequency measurement.
+    ConnectorA11.InterruptHandlerSet(ProximityRiseCallback,
+                                     InputManager::RISING, false);
+    ConnectorA11.InterruptEnable(true);
 
     // Configure A-12 as a digital input for the proximity sensor pulse output.
     ConnectorA12.Mode(Connector::INPUT_DIGITAL);
@@ -346,11 +367,9 @@ int main(void) {
     uint32_t faultFlashStartMs = 0;
     bool faultFlashState = false;
     bool faultLogged = false;
-    uint32_t proxWindowStartMs = Milliseconds();
     float proxHz = 0.0f;
     uint8_t proxZeroWindows = 0;
-    bool proxPrevState = ConnectorA11.State();
-    uint32_t proxPulseCount = 0;
+    uint32_t proxLastUpdateMs = Milliseconds();
     uint32_t proxLogStartMs = Milliseconds();
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
@@ -429,29 +448,28 @@ int main(void) {
         buttonPrevState = buttonPressed;
         buttonHalfPrevState = buttonHalfPressed;
 
-        bool proxState = ConnectorA11.State();
-        if (proxState && !proxPrevState) {
-            proxPulseCount++;
-        }
-        proxPrevState = proxState;
         // Update proximity sensor pulse frequency (Proxout on A-11).
-        uint32_t proxElapsedMs = Milliseconds() - proxWindowStartMs;
         bool proxWindowUpdated = false;
-        if (proxElapsedMs >= proxWindowMs) {
-            if (proxElapsedMs > 0) {
-                proxHz = (proxPulseCount * 1000.0f) / proxElapsedMs;
-            } else {
-                proxHz = 0.0f;
+        bool proxTimedOut = false;
+        bool periodReady = proxPeriodUpdated;
+        uint32_t localPeriodUs = proxPeriodUs;
+        if (periodReady) {
+            proxPeriodUpdated = false;
+            if (localPeriodUs > 0) {
+                proxHz = 1000000.0f / static_cast<float>(localPeriodUs);
+                proxLastUpdateMs = Milliseconds();
             }
-            proxPulseCount = 0;
-            proxWindowStartMs = Milliseconds();
             proxWindowUpdated = true;
+        }
+        if ((Milliseconds() - proxLastUpdateMs) >= proxWindowMs) {
+            proxHz = 0.0f;
+            proxTimedOut = true;
         }
         // A-12 override switch: assert to force Proxout above threshold.
         if (ConnectorA12.State()) {
             proxHz = proxMinHz + 1.0f;
         }
-        if (proxWindowUpdated || ConnectorA12.State()) {
+        if (proxWindowUpdated || proxTimedOut || ConnectorA12.State()) {
             if (proxHz == 0.0f) {
                 if (proxZeroWindows < proxZeroWindowsForStall) {
                     proxZeroWindows++;
