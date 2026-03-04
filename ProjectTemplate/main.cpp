@@ -80,6 +80,8 @@ static void ProximityRiseCallback();
 #define torqueRegMinRpm 5.0f
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
+#define torqueRecoveryRampSeconds 3.0f
+#define torqueRecoveryMaxIncreaseRpmPerSec ((torqueRegMaxRpm - torqueRegMinRpm) / torqueRecoveryRampSeconds)
 #define hlfbAvgSamples 5
 
 
@@ -192,6 +194,31 @@ static void ProximityRiseCallback() {
 
 static int32_t RpmToPulsesPerSec(int32_t rpm) {
     return (rpm * pulsesPerRev) / 60;
+}
+
+static float ClampRpm(float rpm) {
+    if (rpm > torqueRegMaxRpm) {
+        return torqueRegMaxRpm;
+    }
+    if (rpm < torqueRegMinRpm) {
+        return torqueRegMinRpm;
+    }
+    return rpm;
+}
+
+static float ApplyRecoverySlew(float currentRpm, float requestedRpm, float dtSeconds) {
+    if (requestedRpm <= currentRpm) {
+        return requestedRpm;
+    }
+    float maxRise = torqueRecoveryMaxIncreaseRpmPerSec * dtSeconds;
+    if (maxRise < 0.0f) {
+        maxRise = 0.0f;
+    }
+    float rise = requestedRpm - currentRpm;
+    if (rise > maxRise) {
+        return currentRpm + maxRise;
+    }
+    return requestedRpm;
 }
 
 static void ReportHlfbTorque(uint32_t &lastReportMs) {
@@ -845,18 +872,24 @@ int main(void) {
                 }
                 if (torqueRegIntervalMs == 0 ||
                     (Milliseconds() - lastTorqueRegMs) >= torqueRegIntervalMs) {
-                    lastTorqueRegMs = Milliseconds();
+                    uint32_t nowMs = Milliseconds();
+                    float dtSeconds = 0.0f;
+                    if (lastTorqueRegMs != 0) {
+                        dtSeconds = static_cast<float>(nowMs - lastTorqueRegMs) / 1000.0f;
+                    }
+                    lastTorqueRegMs = nowMs;
+                    if (dtSeconds <= 0.0f) {
+                        dtSeconds = 0.001f;
+                    }
                     if (useA11HzControl) {
                         if (proxAvgReady) {
                             float error = proxHz - proxHzAvg;
                             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                                buttonFullmovRpmCommand +=
-                                    error * torqueRegGainRpmPerPercent;
-                                if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMinRpm;
-                                }
+                                float requestedRpm = buttonFullmovRpmCommand +
+                                    (error * torqueRegGainRpmPerPercent);
+                                requestedRpm = ClampRpm(requestedRpm);
+                                buttonFullmovRpmCommand = ApplyRecoverySlew(
+                                    buttonFullmovRpmCommand, requestedRpm, dtSeconds);
                                 motor.MoveVelocity(
                                     -RpmToPulsesPerSec(
                                         static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -866,13 +899,11 @@ int main(void) {
                                         static_cast<int32_t>(buttonFullmovRpmCommand));
                                 }
                             } else {
-                                buttonHalfmovRpmCommand +=
-                                    error * torqueRegGainRpmPerPercent;
-                                if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMinRpm;
-                                }
+                                float requestedRpm = buttonHalfmovRpmCommand +
+                                    (error * torqueRegGainRpmPerPercent);
+                                requestedRpm = ClampRpm(requestedRpm);
+                                buttonHalfmovRpmCommand = ApplyRecoverySlew(
+                                    buttonHalfmovRpmCommand, requestedRpm, dtSeconds);
                                 motor.MoveVelocity(
                                     -RpmToPulsesPerSec(
                                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -906,13 +937,11 @@ int main(void) {
                             // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
                             // Negative error -> increase RPM, positive error -> decrease RPM.
                             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                                buttonFullmovRpmCommand +=
-                                    (-error) * torqueRegGainRpmPerPercent;
-                                if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMinRpm;
-                                }
+                                float requestedRpm = buttonFullmovRpmCommand +
+                                    ((-error) * torqueRegGainRpmPerPercent);
+                                requestedRpm = ClampRpm(requestedRpm);
+                                buttonFullmovRpmCommand = ApplyRecoverySlew(
+                                    buttonFullmovRpmCommand, requestedRpm, dtSeconds);
                                 motor.MoveVelocity(
                                     -RpmToPulsesPerSec(
                                         static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -922,13 +951,11 @@ int main(void) {
                                         static_cast<int32_t>(buttonFullmovRpmCommand));
                                 }
                             } else {
-                                buttonHalfmovRpmCommand +=
-                                    (-error) * torqueRegGainRpmPerPercent;
-                                if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMinRpm;
-                                }
+                                float requestedRpm = buttonHalfmovRpmCommand +
+                                    ((-error) * torqueRegGainRpmPerPercent);
+                                requestedRpm = ClampRpm(requestedRpm);
+                                buttonHalfmovRpmCommand = ApplyRecoverySlew(
+                                    buttonHalfmovRpmCommand, requestedRpm, dtSeconds);
                                 motor.MoveVelocity(
                                     -RpmToPulsesPerSec(
                                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
