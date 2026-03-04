@@ -80,6 +80,7 @@ static void ProximityRiseCallback();
 #define torqueRegMinRpm 5.0f
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
+#define hlfbAvgSamples 5
 
 
 // Debounce helper for a digital input.
@@ -405,6 +406,10 @@ int main(void) {
     uint32_t proxLastUpdateMs = Milliseconds();
     float proxHzAvg = 0.0f;
     bool proxAvgReady = false;
+    float hlfbDutyAvg = 0.0f;
+    float hlfbDutySum = 0.0f;
+    uint8_t hlfbDutyCount = 0;
+    bool hlfbAvgReady = false;
     uint32_t proxLogStartMs = Milliseconds();
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
@@ -815,8 +820,13 @@ int main(void) {
 
                     // Write the HLFB state to the serial port
                     if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
-                        // Writes the torque measured, as a percent of motor peak torque rating
-                        SerialPort.Send(int8_t(round(motor.HlfbPercent())));
+                        float hlfbDuty = motor.HlfbPercent();
+                        SerialPort.Send("HLFB duty: ");
+                        SerialPort.Send(hlfbDuty, 2);
+                        if (hlfbAvgReady) {
+                            SerialPort.Send(" avg: ");
+                            SerialPort.Send(hlfbDutyAvg, 2);
+                        }
                         SerialPort.SendLine("% torque");
                     } else if (hlfbState == MotorDriver::HLFB_ASSERTED) {
                         // Asserted indicates either "Move Done" for position modes, or
@@ -877,11 +887,21 @@ int main(void) {
                         MotorDriver::HlfbStates hlfbState = motor.HlfbState();
                         if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
                             float measuredDuty = motor.HlfbPercent();
-                            float error = torqueTargetPercent - measuredDuty;
+                            hlfbDutySum += measuredDuty;
+                            hlfbDutyCount++;
+                            if (hlfbDutyCount >= hlfbAvgSamples) {
+                                hlfbDutyAvg = hlfbDutySum / static_cast<float>(hlfbDutyCount);
+                                hlfbDutySum = 0.0f;
+                                hlfbDutyCount = 0;
+                                hlfbAvgReady = true;
+                            }
+                            float dutyForControl = hlfbAvgReady ? hlfbDutyAvg : measuredDuty;
+                            float error = torqueTargetPercent - dutyForControl;
                             if (SerialPort) {
                                 SerialPort.Send("Torque target: ");
                                 SerialPort.Send(torqueTargetPercent, 2);
-                                SerialPort.SendLine("%");
+                                SerialPort.Send("%, HLFB avg used: ");
+                                SerialPort.SendLine(dutyForControl, 2);
                             }
                             // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
                             // Negative error -> increase RPM, positive error -> decrease RPM.
