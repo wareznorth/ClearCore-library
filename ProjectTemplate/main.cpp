@@ -437,7 +437,6 @@ int main(void) {
     float hlfbDutySum = 0.0f;
     uint8_t hlfbDutyCount = 0;
     bool hlfbAvgReady = false;
-    uint32_t proxLogStartMs = Milliseconds();
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -591,13 +590,6 @@ int main(void) {
             }
         }
         bool proxOk = proxHz > proxMinHz;
-        if (SerialPort && (Milliseconds() - proxLogStartMs) >= proxLogIntervalMs) {
-            proxLogStartMs = Milliseconds();
-            SerialPort.Send("Proxout: ");
-            SerialPort.Send(proxHz, 2);
-            SerialPort.Send(" Hz (");
-            SerialPort.SendLine(proxOk ? "ABOVE 5" : "BELOW 5");
-        }
 
         // Handle enable switch transitions: enable motor and start/skip homing,
         // or stop motion and disable immediately when enable is removed.
@@ -862,14 +854,7 @@ int main(void) {
                     } else {
                         SerialPort.SendLine("DISABLED or SHUTDOWN");
                     }
-                } else if (useA11HzControl &&
-                           SerialPort && (Milliseconds() - lastHlfbReportMs >= hlfbReportMs)) {
-                    lastHlfbReportMs = Milliseconds();
-                    SerialPort.Send("A11 Hz: ");
-                    SerialPort.Send(proxHz, 2);
-                    SerialPort.Send(" Avg(5 edges): ");
-                    SerialPort.SendLine(proxHzAvg, 2);
-                }
+}
                 if (torqueRegIntervalMs == 0 ||
                     (Milliseconds() - lastTorqueRegMs) >= torqueRegIntervalMs) {
                     uint32_t nowMs = Milliseconds();
