@@ -51,7 +51,7 @@
 #define jogRpm 400
 
 // Runtime switch: true uses A-11 Hz for speed adjustment; false uses HLFB.
-bool useA11HzControl = true;
+bool useA11HzControl = false;
 
 // Proximity measurement via rising-edge interrupt on A-11.
 volatile uint32_t proxLastRiseUs = 0;
@@ -75,16 +75,19 @@ static void ProximityRiseCallback();
 #define buttonHalfmovCounts 128000
 
 // Torque regulation parameters (Button moves only).
-#define torqueTargetPercent -10.0f
-#define torqueRegMaxRpm 200.0f
+#define torqueTargetPercent -11.0f
+#define torqueRegMaxRpm 220.0f
 #define torqueRegMinRpm 5.0f
-#define torqueRegGainRpmPerPercent 0.80f
-#define torqueRegIntervalMs 0
+#define torqueRegGainRpmPerPercent 1.80f
+#define torqueRegIntervalMs 200
 #define torqueControlStartDelayMs 300
 #define torqueControlDeadbandPercent 2.0f
-#define torqueRecoveryRampSeconds 3.0f
+#define torqueRecoveryRampSeconds 4.0f
 #define torqueRecoveryMaxIncreaseRpmPerSec ((torqueRegMaxRpm - torqueRegMinRpm) / torqueRecoveryRampSeconds)
-#define hlfbAvgSamples 5
+#define hlfbAvgSamples 25
+#define torquePidKiRpmPerPercentSec 0.35f
+#define torquePidKdRpmPerPercentPerSec 0.06f
+#define torquePidIntegralLimitPercentSec 120.0f
 
 
 // Debounce helper for a digital input.
@@ -206,6 +209,16 @@ static float ClampRpm(float rpm) {
         return torqueRegMinRpm;
     }
     return rpm;
+}
+
+static float ClampPidIntegral(float integral) {
+    if (integral > torquePidIntegralLimitPercentSec) {
+        return torquePidIntegralLimitPercentSec;
+    }
+    if (integral < -torquePidIntegralLimitPercentSec) {
+        return -torquePidIntegralLimitPercentSec;
+    }
+    return integral;
 }
 
 static float ApplyRecoverySlew(float currentRpm, float requestedRpm, float dtSeconds) {
@@ -444,6 +457,9 @@ int main(void) {
     float hlfbDutySum = 0.0f;
     uint8_t hlfbDutyCount = 0;
     bool hlfbAvgReady = false;
+    float torquePidIntegral = 0.0f;
+    float torquePidPrevError = 0.0f;
+    bool torquePidHasPrevError = false;
     // Power-up homing flow:
     // 1) If enable switch is OFF, auto-enable the motor once.
     // 2) If home switch is tripped, clear alerts and back off.
@@ -718,6 +734,9 @@ int main(void) {
                 hlfbDutySum = 0.0f;
                 hlfbDutyCount = 0;
                 hlfbAvgReady = false;
+                torquePidIntegral = 0.0f;
+                torquePidPrevError = 0.0f;
+                torquePidHasPrevError = false;
                 stallResumeSource = STALL_RESUME_FULL;
                 if (SerialPort) {
                     SerialPort.SendLine("Buttonfullmov started.");
@@ -740,6 +759,9 @@ int main(void) {
                 hlfbDutySum = 0.0f;
                 hlfbDutyCount = 0;
                 hlfbAvgReady = false;
+                torquePidIntegral = 0.0f;
+                torquePidPrevError = 0.0f;
+                torquePidHasPrevError = false;
                 stallResumeSource = STALL_RESUME_HALF;
                 if (SerialPort) {
                     SerialPort.SendLine("ButtonHalfmov started.");
@@ -821,6 +843,9 @@ int main(void) {
                         hlfbDutySum = 0.0f;
                         hlfbDutyCount = 0;
                         hlfbAvgReady = false;
+                        torquePidIntegral = 0.0f;
+                        torquePidPrevError = 0.0f;
+                        torquePidHasPrevError = false;
                         motor.MoveVelocity(
                             -RpmToPulsesPerSec(
                                 static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -839,6 +864,9 @@ int main(void) {
                         hlfbDutySum = 0.0f;
                         hlfbDutyCount = 0;
                         hlfbAvgReady = false;
+                        torquePidIntegral = 0.0f;
+                        torquePidPrevError = 0.0f;
+                        torquePidHasPrevError = false;
                         motor.MoveVelocity(
                             -RpmToPulsesPerSec(
                                 static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -950,11 +978,20 @@ int main(void) {
                             if (fabsf(error) < torqueControlDeadbandPercent) {
                                 error = 0.0f;
                             }
-                            // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
-                            // Negative error -> increase RPM, positive error -> decrease RPM.
+                            torquePidIntegral = ClampPidIntegral(
+                                torquePidIntegral + (error * dtSeconds));
+                            float derivative = 0.0f;
+                            if (torquePidHasPrevError && dtSeconds > 0.0f) {
+                                derivative = (error - torquePidPrevError) / dtSeconds;
+                            }
+                            torquePidPrevError = error;
+                            torquePidHasPrevError = true;
+                            float pidDeltaRpm = -((error * torqueRegGainRpmPerPercent) +
+                                (torquePidIntegral * torquePidKiRpmPerPercentSec) +
+                                (derivative * torquePidKdRpmPerPercentPerSec));
+
                             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                                float requestedRpm = buttonFullmovRpmCommand +
-                                    ((-error) * torqueRegGainRpmPerPercent);
+                                float requestedRpm = buttonFullmovRpmCommand + pidDeltaRpm;
                                 requestedRpm = ClampRpm(requestedRpm);
                                 buttonFullmovRpmCommand = ApplyRecoverySlew(
                                     buttonFullmovRpmCommand, requestedRpm, dtSeconds);
@@ -967,8 +1004,7 @@ int main(void) {
                                         static_cast<int32_t>(buttonFullmovRpmCommand));
                                 }
                             } else {
-                                float requestedRpm = buttonHalfmovRpmCommand +
-                                    ((-error) * torqueRegGainRpmPerPercent);
+                                float requestedRpm = buttonHalfmovRpmCommand + pidDeltaRpm;
                                 requestedRpm = ClampRpm(requestedRpm);
                                 buttonHalfmovRpmCommand = ApplyRecoverySlew(
                                     buttonHalfmovRpmCommand, requestedRpm, dtSeconds);
