@@ -986,7 +986,7 @@ int main(void) {
                             }
                             torquePidPrevError = error;
                             torquePidHasPrevError = true;
-                            float pidDeltaRpm = -((error * torqueRegGainRpmPerPercent) +
+                            float pidDeltaRpm = ((error * torqueRegGainRpmPerPercent) +
                                 (torquePidIntegral * torquePidKiRpmPerPercentSec) +
                                 (derivative * torquePidKdRpmPerPercentPerSec));
 
