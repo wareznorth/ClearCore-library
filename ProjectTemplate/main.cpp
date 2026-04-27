@@ -88,11 +88,14 @@ static void ProximityRiseCallback();
 #define a11IntegralMin -80.0f
 #define a11IntegralMax 80.0f
 #define a11DropThresholdHz 1.0f
+#define a11RecoverDropThresholdHz 1.8f
 #define a11HoldMs 400
-#define a11StableBandHz 0.40f
+#define a11StableBandHz 1.00f
 #define a11StableMs 300
 #define a11BackoffStepRpm 5.0f
 #define a11RampUpRpmPerSec 8.0f
+#define a11SetpointBlend 0.10f
+#define a11RecoverDropConfirmMs 120
 
 
 // Debounce helper for a digital input.
@@ -415,6 +418,7 @@ int main(void) {
     uint32_t a11LastUpdateMs = Milliseconds();
     uint32_t a11HoldStartMs = 0;
     uint32_t a11StableStartMs = 0;
+    uint32_t a11RecoverDropStartMs = 0;
     int32_t buttonFullmovStartPos = 0;
     int32_t buttonHalfmovStartPos = 0;
     bool buttonFullmovCompleted = false;
@@ -716,6 +720,7 @@ int main(void) {
                 a11LastUpdateMs = Milliseconds();
                 a11HoldStartMs = 0;
                 a11StableStartMs = 0;
+                a11RecoverDropStartMs = 0;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -741,6 +746,7 @@ int main(void) {
                 a11LastUpdateMs = Milliseconds();
                 a11HoldStartMs = 0;
                 a11StableStartMs = 0;
+                a11RecoverDropStartMs = 0;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -900,6 +906,7 @@ int main(void) {
                                 a11LastAvgHz = proxHzAvg;
                                 a11LastUpdateMs = Milliseconds();
                                 a11ControlState = A11_CTRL_TRACK;
+                                a11RecoverDropStartMs = 0;
                             }
 
                             uint32_t nowMs = Milliseconds();
@@ -910,6 +917,8 @@ int main(void) {
                             a11LastUpdateMs = nowMs;
                             bool dropDetected =
                                 proxHzAvg < (a11SetpointHz - a11DropThresholdHz);
+                            bool recoverDropDetected =
+                                proxHzAvg < (a11SetpointHz - a11RecoverDropThresholdHz);
                             bool stableNow =
                                 fabsf(proxHzAvg - a11LastAvgHz) <= a11StableBandHz;
                             a11LastAvgHz = proxHzAvg;
@@ -953,8 +962,12 @@ int main(void) {
                                             (a11StableStartMs != 0) &&
                                             ((nowMs - a11StableStartMs) >= a11StableMs);
                                         if (stableForWindow) {
+                                            a11SetpointHz =
+                                                ((1.0f - a11SetpointBlend) * a11SetpointHz) +
+                                                (a11SetpointBlend * proxHzAvg);
                                             a11ControlState = A11_CTRL_RECOVER;
                                             a11PrevError = 0.0f;
+                                            a11RecoverDropStartMs = 0;
                                         } else {
                                             *rpmCommand -= a11BackoffStepRpm;
                                             a11HoldStartMs = nowMs;
@@ -964,12 +977,27 @@ int main(void) {
                                     break;
                                 case A11_CTRL_RECOVER:
                                     *rpmCommand += a11RampUpRpmPerSec * dtSec;
-                                    if (dropDetected) {
-                                        *rpmCommand -= a11BackoffStepRpm;
-                                        a11ControlState = A11_CTRL_HOLD;
-                                        a11HoldStartMs = nowMs;
-                                        a11StableStartMs = 0;
-                                    } else if (*rpmCommand >= torqueRegMaxRpm) {
+                                    if (proxHzAvg > a11SetpointHz) {
+                                        a11SetpointHz =
+                                            ((1.0f - a11SetpointBlend) * a11SetpointHz) +
+                                            (a11SetpointBlend * proxHzAvg);
+                                    }
+                                    if (recoverDropDetected) {
+                                        if (a11RecoverDropStartMs == 0) {
+                                            a11RecoverDropStartMs = nowMs;
+                                        }
+                                        if ((nowMs - a11RecoverDropStartMs) >=
+                                            a11RecoverDropConfirmMs) {
+                                            *rpmCommand -= a11BackoffStepRpm;
+                                            a11ControlState = A11_CTRL_HOLD;
+                                            a11HoldStartMs = nowMs;
+                                            a11StableStartMs = 0;
+                                            a11RecoverDropStartMs = 0;
+                                        }
+                                    } else {
+                                        a11RecoverDropStartMs = 0;
+                                    }
+                                    if (*rpmCommand >= torqueRegMaxRpm) {
                                         *rpmCommand = torqueRegMaxRpm;
                                         a11ControlState = A11_CTRL_TRACK;
                                     }
