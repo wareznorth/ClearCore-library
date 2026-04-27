@@ -82,11 +82,13 @@ static void ProximityRiseCallback();
 #define torqueRegIntervalMs 0
 
 // A11 Hz PID parameters (Button moves only).
-#define a11PidKp 1.20f
-#define a11PidKi 0.15f
+#define a11PidKp 0.25f
+#define a11PidKi 0.02f
 #define a11PidKd 0.00f
 #define a11IntegralMin -80.0f
 #define a11IntegralMax 80.0f
+#define a11ErrorDeadbandHz 0.50f
+#define a11SetpointBlendAtMin 0.05f
 
 
 // Debounce helper for a digital input.
@@ -881,11 +883,32 @@ int main(void) {
                             }
                             a11LastUpdateMs = nowMs;
                             float error = a11SetpointHz - proxHzAvg;
-                            a11Integral += error * dtSec;
-                            if (a11Integral > a11IntegralMax) {
-                                a11Integral = a11IntegralMax;
-                            } else if (a11Integral < a11IntegralMin) {
-                                a11Integral = a11IntegralMin;
+                            if (fabsf(error) <= a11ErrorDeadbandHz) {
+                                error = 0.0f;
+                            }
+
+                            bool nearMinRpm =
+                                *rpmCommand <= (torqueRegMinRpm + 0.1f);
+                            bool nearMaxRpm =
+                                *rpmCommand >= (torqueRegMaxRpm - 0.1f);
+                            bool pushingFurtherIntoLimit =
+                                (nearMinRpm && error > 0.0f) ||
+                                (nearMaxRpm && error < 0.0f);
+                            if (!pushingFurtherIntoLimit) {
+                                a11Integral += error * dtSec;
+                                if (a11Integral > a11IntegralMax) {
+                                    a11Integral = a11IntegralMax;
+                                } else if (a11Integral < a11IntegralMin) {
+                                    a11Integral = a11IntegralMin;
+                                }
+                            } else {
+                                a11Integral *= 0.95f;
+                            }
+
+                            if (nearMinRpm && error > 0.0f) {
+                                a11SetpointHz =
+                                    ((1.0f - a11SetpointBlendAtMin) * a11SetpointHz) +
+                                    (a11SetpointBlendAtMin * proxHzAvg);
                             }
                             float derivative = (error - a11PrevError) / dtSec;
                             float rpmDelta = (a11PidKp * error) +
