@@ -67,28 +67,28 @@ volatile uint8_t proxPeriodCount = 0;
 static void ProximityRiseCallback();
 
 // Buttonfullmov parameters.
-#define buttonFullmovRpm 200
+#define buttonFullmovRpm 220
 #define buttonFullmovCounts 256000
 
 // ButtonHalfmov parameters.
-#define buttonHalfmovRpm 200
+#define buttonHalfmovRpm 220
 #define buttonHalfmovCounts 128000
 
 // Torque regulation parameters (Button moves only).
 #define torqueTargetPercent -10.0f
-#define torqueRegMaxRpm 200.0f
+#define torqueRegMaxRpm 230.0f
 #define torqueRegMinRpm 5.0f
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
 
 // A11 Hz PID parameters (Button moves only).
-#define a11PidKp 0.25f
-#define a11PidKi 0.02f
+#define a11PidKp 0.05f
+#define a11PidKi 0.0f
 #define a11PidKd 0.00f
 #define a11IntegralMin -80.0f
 #define a11IntegralMax 80.0f
-#define a11ErrorDeadbandHz 0.50f
-#define a11SetpointBlendAtMin 0.05f
+#define a11ErrorDeadbandHz 4.50f
+#define a11SetpointBlendAtMin 0.45f
 
 
 // Debounce helper for a digital input.
@@ -575,8 +575,7 @@ int main(void) {
             proxLogStartMs = Milliseconds();
             SerialPort.Send("Proxout: ");
             SerialPort.Send(proxHz, 2);
-            SerialPort.Send(" Hz (");
-            SerialPort.SendLine(proxOk ? "ABOVE 5" : "BELOW 5");
+            SerialPort.SendLine(" Hz");
         }
 
         // Handle enable switch transitions: enable motor and start/skip homing,
