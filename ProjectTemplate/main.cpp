@@ -46,7 +46,7 @@
 #define proxLogIntervalMs 500
 #define stallReverseCounts 5000
 #define proxZeroWindowsForStall 2
-#define proxAvgEdges 5
+#define proxAvgEdges 10
 #define jogLongPressMs 5000
 #define jogRpm 400
 
