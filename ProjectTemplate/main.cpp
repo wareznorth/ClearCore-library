@@ -89,7 +89,6 @@ static void ProximityRiseCallback();
 #define a11IntegralMax 80.0f
 #define a11ErrorDeadbandHz 4.50f
 #define a11SetpointBlendAtMin 0.45f
-#define a11StartupSetpointHz 100.0f
 
 
 // Debounce helper for a digital input.
@@ -869,7 +868,7 @@ int main(void) {
                             }
 
                             if (!a11SetpointValid) {
-                                a11SetpointHz = a11StartupSetpointHz;
+                                a11SetpointHz = proxHzAvg;
                                 a11SetpointValid = true;
                                 a11Integral = 0.0f;
                                 a11PrevError = 0.0f;
