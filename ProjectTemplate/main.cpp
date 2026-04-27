@@ -81,6 +81,19 @@ static void ProximityRiseCallback();
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
 
+// A11 Hz PID/feed-hold parameters (Button moves only).
+#define a11PidKp 1.20f
+#define a11PidKi 0.15f
+#define a11PidKd 0.00f
+#define a11IntegralMin -80.0f
+#define a11IntegralMax 80.0f
+#define a11DropThresholdHz 1.0f
+#define a11HoldMs 400
+#define a11StableBandHz 0.40f
+#define a11StableMs 300
+#define a11BackoffStepRpm 5.0f
+#define a11RampUpRpmPerSec 8.0f
+
 
 // Debounce helper for a digital input.
 struct DebounceInput {
@@ -147,6 +160,12 @@ enum StallResumeSource {
     STALL_RESUME_NONE,
     STALL_RESUME_FULL,
     STALL_RESUME_HALF
+};
+
+enum A11ControlState {
+    A11_CTRL_TRACK,
+    A11_CTRL_HOLD,
+    A11_CTRL_RECOVER
 };
 
 
@@ -387,6 +406,15 @@ int main(void) {
     uint32_t lastTorqueRegMs = 0;
     float buttonFullmovRpmCommand = buttonFullmovRpm;
     float buttonHalfmovRpmCommand = buttonHalfmovRpm;
+    A11ControlState a11ControlState = A11_CTRL_TRACK;
+    bool a11SetpointValid = false;
+    float a11SetpointHz = 0.0f;
+    float a11Integral = 0.0f;
+    float a11PrevError = 0.0f;
+    float a11LastAvgHz = 0.0f;
+    uint32_t a11LastUpdateMs = Milliseconds();
+    uint32_t a11HoldStartMs = 0;
+    uint32_t a11StableStartMs = 0;
     int32_t buttonFullmovStartPos = 0;
     int32_t buttonHalfmovStartPos = 0;
     bool buttonFullmovCompleted = false;
@@ -680,6 +708,14 @@ int main(void) {
                 proxOk) {
                 buttonFullmovRpmCommand = buttonFullmovRpm;
                 buttonFullmovCompleted = false;
+                a11ControlState = A11_CTRL_TRACK;
+                a11SetpointValid = false;
+                a11Integral = 0.0f;
+                a11PrevError = 0.0f;
+                a11LastAvgHz = 0.0f;
+                a11LastUpdateMs = Milliseconds();
+                a11HoldStartMs = 0;
+                a11StableStartMs = 0;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -697,6 +733,14 @@ int main(void) {
                 proxOk) {
                 buttonHalfmovRpmCommand = buttonHalfmovRpm;
                 buttonHalfmovCompleted = false;
+                a11ControlState = A11_CTRL_TRACK;
+                a11SetpointValid = false;
+                a11Integral = 0.0f;
+                a11PrevError = 0.0f;
+                a11LastAvgHz = 0.0f;
+                a11LastUpdateMs = Milliseconds();
+                a11HoldStartMs = 0;
+                a11StableStartMs = 0;
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -838,39 +882,113 @@ int main(void) {
                     lastTorqueRegMs = Milliseconds();
                     if (useA11HzControl) {
                         if (proxAvgReady) {
-                            float error = proxHz - proxHzAvg;
+                            float *rpmCommand = nullptr;
+                            const char *label = nullptr;
                             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                                buttonFullmovRpmCommand +=
-                                    error * torqueRegGainRpmPerPercent;
-                                if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMinRpm;
-                                }
-                                motor.MoveVelocity(
-                                    -RpmToPulsesPerSec(
-                                        static_cast<int32_t>(buttonFullmovRpmCommand)));
-                                if (SerialPort) {
-                                    SerialPort.Send("Buttonfullmov RPM cmd: ");
-                                    SerialPort.SendLine(
-                                        static_cast<int32_t>(buttonFullmovRpmCommand));
-                                }
+                                rpmCommand = &buttonFullmovRpmCommand;
+                                label = "Buttonfullmov RPM cmd: ";
                             } else {
-                                buttonHalfmovRpmCommand +=
-                                    error * torqueRegGainRpmPerPercent;
-                                if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMinRpm;
+                                rpmCommand = &buttonHalfmovRpmCommand;
+                                label = "ButtonHalfmov RPM cmd: ";
+                            }
+
+                            if (!a11SetpointValid) {
+                                a11SetpointHz = proxHzAvg;
+                                a11SetpointValid = true;
+                                a11Integral = 0.0f;
+                                a11PrevError = 0.0f;
+                                a11LastAvgHz = proxHzAvg;
+                                a11LastUpdateMs = Milliseconds();
+                                a11ControlState = A11_CTRL_TRACK;
+                            }
+
+                            uint32_t nowMs = Milliseconds();
+                            float dtSec = static_cast<float>(nowMs - a11LastUpdateMs) / 1000.0f;
+                            if (dtSec <= 0.0f) {
+                                dtSec = 0.001f;
+                            }
+                            a11LastUpdateMs = nowMs;
+                            bool dropDetected =
+                                proxHzAvg < (a11SetpointHz - a11DropThresholdHz);
+                            bool stableNow =
+                                fabsf(proxHzAvg - a11LastAvgHz) <= a11StableBandHz;
+                            a11LastAvgHz = proxHzAvg;
+
+                            if (a11ControlState == A11_CTRL_TRACK && dropDetected) {
+                                *rpmCommand -= a11BackoffStepRpm;
+                                a11ControlState = A11_CTRL_HOLD;
+                                a11HoldStartMs = nowMs;
+                                a11StableStartMs = 0;
+                            }
+
+                            switch (a11ControlState) {
+                                case A11_CTRL_TRACK: {
+                                    float error = a11SetpointHz - proxHzAvg;
+                                    a11Integral += error * dtSec;
+                                    if (a11Integral > a11IntegralMax) {
+                                        a11Integral = a11IntegralMax;
+                                    } else if (a11Integral < a11IntegralMin) {
+                                        a11Integral = a11IntegralMin;
+                                    }
+                                    float derivative =
+                                        (error - a11PrevError) / dtSec;
+                                    float rpmDelta = (a11PidKp * error) +
+                                                     (a11PidKi * a11Integral) +
+                                                     (a11PidKd * derivative);
+                                    a11PrevError = error;
+                                    *rpmCommand -= rpmDelta;
+                                    break;
                                 }
-                                motor.MoveVelocity(
-                                    -RpmToPulsesPerSec(
-                                        static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                                if (SerialPort) {
-                                    SerialPort.Send("ButtonHalfmov RPM cmd: ");
-                                    SerialPort.SendLine(
-                                        static_cast<int32_t>(buttonHalfmovRpmCommand));
-                                }
+                                case A11_CTRL_HOLD:
+                                    if (stableNow) {
+                                        if (a11StableStartMs == 0) {
+                                            a11StableStartMs = nowMs;
+                                        }
+                                    } else {
+                                        a11StableStartMs = 0;
+                                    }
+
+                                    if ((nowMs - a11HoldStartMs) >= a11HoldMs) {
+                                        bool stableForWindow =
+                                            (a11StableStartMs != 0) &&
+                                            ((nowMs - a11StableStartMs) >= a11StableMs);
+                                        if (stableForWindow) {
+                                            a11ControlState = A11_CTRL_RECOVER;
+                                            a11PrevError = 0.0f;
+                                        } else {
+                                            *rpmCommand -= a11BackoffStepRpm;
+                                            a11HoldStartMs = nowMs;
+                                            a11StableStartMs = 0;
+                                        }
+                                    }
+                                    break;
+                                case A11_CTRL_RECOVER:
+                                    *rpmCommand += a11RampUpRpmPerSec * dtSec;
+                                    if (dropDetected) {
+                                        *rpmCommand -= a11BackoffStepRpm;
+                                        a11ControlState = A11_CTRL_HOLD;
+                                        a11HoldStartMs = nowMs;
+                                        a11StableStartMs = 0;
+                                    } else if (*rpmCommand >= torqueRegMaxRpm) {
+                                        *rpmCommand = torqueRegMaxRpm;
+                                        a11ControlState = A11_CTRL_TRACK;
+                                    }
+                                    break;
+                            }
+
+                            if (*rpmCommand > torqueRegMaxRpm) {
+                                *rpmCommand = torqueRegMaxRpm;
+                            } else if (*rpmCommand < torqueRegMinRpm) {
+                                *rpmCommand = torqueRegMinRpm;
+                            }
+
+                            motor.MoveVelocity(
+                                -RpmToPulsesPerSec(
+                                    static_cast<int32_t>(*rpmCommand)));
+                            if (SerialPort) {
+                                SerialPort.Send(label);
+                                SerialPort.SendLine(
+                                    static_cast<int32_t>(*rpmCommand));
                             }
                         }
                     } else {
