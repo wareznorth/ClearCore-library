@@ -638,6 +638,17 @@ int main(void) {
                     SerialPort.SendLine("Motor faulted while stopped.");
                     SerialPort.Send("PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
+                    SerialPort.Send("AlertReg: ");
+                    SerialPort.SendLine(motor.AlertReg().reg);
+                    SerialPort.Send("HLFB state at fault: ");
+                    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+                    if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
+                        SerialPort.SendLine("HAS_MEASUREMENT");
+                    } else if (hlfbState == MotorDriver::HLFB_ASSERTED) {
+                        SerialPort.SendLine("ASSERTED");
+                    } else {
+                        SerialPort.SendLine("DISABLED or SHUTDOWN");
+                    }
                     faultLogged = true;
                 }
             } else if (manualJogMode) {
