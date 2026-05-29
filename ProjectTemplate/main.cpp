@@ -46,7 +46,7 @@
 #define proxLogIntervalMs 500
 #define stallReverseCounts 5000
 #define proxZeroWindowsForStall 2
-#define proxAvgEdges 5
+#define proxAvgEdges 10
 #define jogLongPressMs 5000
 #define jogRpm 400
 
@@ -67,19 +67,41 @@ volatile uint8_t proxPeriodCount = 0;
 static void ProximityRiseCallback();
 
 // Buttonfullmov parameters.
-#define buttonFullmovRpm 200
+#define buttonFullmovRpm 220
 #define buttonFullmovCounts 256000
 
 // ButtonHalfmov parameters.
-#define buttonHalfmovRpm 200
+#define buttonHalfmovRpm 220
 #define buttonHalfmovCounts 128000
 
 // Torque regulation parameters (Button moves only).
 #define torqueTargetPercent -10.0f
-#define torqueRegMaxRpm 200.0f
+#define torqueRegMaxRpm 230.0f
 #define torqueRegMinRpm 5.0f
 #define torqueRegGainRpmPerPercent 0.80f
 #define torqueRegIntervalMs 0
+
+// A11 Hz PID parameters (Button moves only).
+#define a11PidKp 0.80f
+#define a11PidKi 0.012f
+#define a11PidKd 0.004f
+#define a11IntegralMin -80.0f
+#define a11IntegralMax 80.0f
+#define a11ErrorDeadbandHz 2.40f
+#define a11SetpointBlendAtMin 0.36f
+
+// HLFB PID parameters (Button moves only when useA11HzControl is false).
+#define hlfbPidTargetPercent -11.0f
+#define hlfbPidKp 1.20f
+#define hlfbPidKi 0.08f
+#define hlfbPidKd 0.02f
+#define hlfbIntegralMin -80.0f
+#define hlfbIntegralMax 80.0f
+#define hlfbErrorDeadbandPercent 0.5f
+#define hlfbA11AssistDropDeadbandHz 0.25f
+#define hlfbA11AssistLoadDeadbandPercent 0.25f
+#define hlfbA11AssistGainRpmPerHz 0.50f
+#define hlfbA11AssistMaxRpm 5.0f
 
 
 // Debounce helper for a digital input.
@@ -148,8 +170,6 @@ enum StallResumeSource {
     STALL_RESUME_FULL,
     STALL_RESUME_HALF
 };
-
-
 
 struct HomingContext {
     HomingState state;
@@ -387,6 +407,17 @@ int main(void) {
     uint32_t lastTorqueRegMs = 0;
     float buttonFullmovRpmCommand = buttonFullmovRpm;
     float buttonHalfmovRpmCommand = buttonHalfmovRpm;
+    float hlfbIntegral = 0.0f;
+    float hlfbPrevError = 0.0f;
+    float hlfbPrevMeasuredDuty = 0.0f;
+    float hlfbPrevProxHzAvg = 0.0f;
+    bool hlfbA11AssistValid = false;
+    uint32_t hlfbLastUpdateMs = Milliseconds();
+    bool a11SetpointValid = false;
+    float a11SetpointHz = 0.0f;
+    float a11Integral = 0.0f;
+    float a11PrevError = 0.0f;
+    uint32_t a11LastUpdateMs = Milliseconds();
     int32_t buttonFullmovStartPos = 0;
     int32_t buttonHalfmovStartPos = 0;
     bool buttonFullmovCompleted = false;
@@ -563,8 +594,7 @@ int main(void) {
             proxLogStartMs = Milliseconds();
             SerialPort.Send("Proxout: ");
             SerialPort.Send(proxHz, 2);
-            SerialPort.Send(" Hz (");
-            SerialPort.SendLine(proxOk ? "ABOVE 5" : "BELOW 5");
+            SerialPort.SendLine(" Hz");
         }
 
         // Handle enable switch transitions: enable motor and start/skip homing,
@@ -627,6 +657,17 @@ int main(void) {
                     SerialPort.SendLine("Motor faulted while stopped.");
                     SerialPort.Send("PositionRefCommanded: ");
                     SerialPort.SendLine(motor.PositionRefCommanded());
+                    SerialPort.Send("AlertReg: ");
+                    SerialPort.SendLine(motor.AlertReg().reg);
+                    SerialPort.Send("HLFB state at fault: ");
+                    MotorDriver::HlfbStates hlfbState = motor.HlfbState();
+                    if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
+                        SerialPort.SendLine("HAS_MEASUREMENT");
+                    } else if (hlfbState == MotorDriver::HLFB_ASSERTED) {
+                        SerialPort.SendLine("ASSERTED");
+                    } else {
+                        SerialPort.SendLine("DISABLED or SHUTDOWN");
+                    }
                     faultLogged = true;
                 }
             } else if (manualJogMode) {
@@ -680,6 +721,16 @@ int main(void) {
                 proxOk) {
                 buttonFullmovRpmCommand = buttonFullmovRpm;
                 buttonFullmovCompleted = false;
+                a11SetpointValid = false;
+                a11Integral = 0.0f;
+                a11PrevError = 0.0f;
+                a11LastUpdateMs = Milliseconds();
+                hlfbIntegral = 0.0f;
+                hlfbPrevError = 0.0f;
+                hlfbPrevMeasuredDuty = 0.0f;
+                hlfbPrevProxHzAvg = proxHzAvg;
+                hlfbA11AssistValid = false;
+                hlfbLastUpdateMs = Milliseconds();
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonFullmovRpmCommand)));
@@ -697,6 +748,16 @@ int main(void) {
                 proxOk) {
                 buttonHalfmovRpmCommand = buttonHalfmovRpm;
                 buttonHalfmovCompleted = false;
+                a11SetpointValid = false;
+                a11Integral = 0.0f;
+                a11PrevError = 0.0f;
+                a11LastUpdateMs = Milliseconds();
+                hlfbIntegral = 0.0f;
+                hlfbPrevError = 0.0f;
+                hlfbPrevMeasuredDuty = 0.0f;
+                hlfbPrevProxHzAvg = proxHzAvg;
+                hlfbA11AssistValid = false;
+                hlfbLastUpdateMs = Milliseconds();
                 motor.MoveVelocity(
                     -RpmToPulsesPerSec(
                         static_cast<int32_t>(buttonHalfmovRpmCommand)));
@@ -838,85 +899,173 @@ int main(void) {
                     lastTorqueRegMs = Milliseconds();
                     if (useA11HzControl) {
                         if (proxAvgReady) {
-                            float error = proxHz - proxHzAvg;
+                            float *rpmCommand = nullptr;
+                            const char *label = nullptr;
                             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                                buttonFullmovRpmCommand +=
-                                    error * torqueRegGainRpmPerPercent;
-                                if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMinRpm;
-                                }
-                                motor.MoveVelocity(
-                                    -RpmToPulsesPerSec(
-                                        static_cast<int32_t>(buttonFullmovRpmCommand)));
-                                if (SerialPort) {
-                                    SerialPort.Send("Buttonfullmov RPM cmd: ");
-                                    SerialPort.SendLine(
-                                        static_cast<int32_t>(buttonFullmovRpmCommand));
+                                rpmCommand = &buttonFullmovRpmCommand;
+                                label = "Buttonfullmov RPM cmd: ";
+                            } else {
+                                rpmCommand = &buttonHalfmovRpmCommand;
+                                label = "ButtonHalfmov RPM cmd: ";
+                            }
+
+                            if (!a11SetpointValid) {
+                                a11SetpointHz = proxHzAvg;
+                                a11SetpointValid = true;
+                                a11Integral = 0.0f;
+                                a11PrevError = 0.0f;
+                                a11LastUpdateMs = Milliseconds();
+                            }
+
+                            uint32_t nowMs = Milliseconds();
+                            float dtSec = static_cast<float>(nowMs - a11LastUpdateMs) / 1000.0f;
+                            if (dtSec <= 0.0f) {
+                                dtSec = 0.001f;
+                            }
+                            a11LastUpdateMs = nowMs;
+                            float error = a11SetpointHz - proxHzAvg;
+                            if (fabsf(error) <= a11ErrorDeadbandHz) {
+                                error = 0.0f;
+                            }
+
+                            bool nearMinRpm =
+                                *rpmCommand <= (torqueRegMinRpm + 0.1f);
+                            bool nearMaxRpm =
+                                *rpmCommand >= (torqueRegMaxRpm - 0.1f);
+                            bool pushingFurtherIntoLimit =
+                                (nearMinRpm && error > 0.0f) ||
+                                (nearMaxRpm && error < 0.0f);
+                            if (!pushingFurtherIntoLimit) {
+                                a11Integral += error * dtSec;
+                                if (a11Integral > a11IntegralMax) {
+                                    a11Integral = a11IntegralMax;
+                                } else if (a11Integral < a11IntegralMin) {
+                                    a11Integral = a11IntegralMin;
                                 }
                             } else {
-                                buttonHalfmovRpmCommand +=
-                                    error * torqueRegGainRpmPerPercent;
-                                if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMinRpm;
-                                }
-                                motor.MoveVelocity(
-                                    -RpmToPulsesPerSec(
-                                        static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                                if (SerialPort) {
-                                    SerialPort.Send("ButtonHalfmov RPM cmd: ");
-                                    SerialPort.SendLine(
-                                        static_cast<int32_t>(buttonHalfmovRpmCommand));
-                                }
+                                a11Integral *= 0.95f;
+                            }
+
+                            if (nearMinRpm && error > 0.0f) {
+                                a11SetpointHz =
+                                    ((1.0f - a11SetpointBlendAtMin) * a11SetpointHz) +
+                                    (a11SetpointBlendAtMin * proxHzAvg);
+                            }
+                            float derivative = (error - a11PrevError) / dtSec;
+                            float rpmDelta = (a11PidKp * error) +
+                                             (a11PidKi * a11Integral) +
+                                             (a11PidKd * derivative);
+                            a11PrevError = error;
+                            *rpmCommand -= rpmDelta;
+
+                            if (*rpmCommand > torqueRegMaxRpm) {
+                                *rpmCommand = torqueRegMaxRpm;
+                            } else if (*rpmCommand < torqueRegMinRpm) {
+                                *rpmCommand = torqueRegMinRpm;
+                            }
+
+                            motor.MoveVelocity(
+                                -RpmToPulsesPerSec(
+                                    static_cast<int32_t>(*rpmCommand)));
+                            if (SerialPort) {
+                                SerialPort.Send(label);
+                                SerialPort.SendLine(
+                                    static_cast<int32_t>(*rpmCommand));
                             }
                         }
                     } else {
                         MotorDriver::HlfbStates hlfbState = motor.HlfbState();
                         if (hlfbState == MotorDriver::HLFB_HAS_MEASUREMENT) {
-                            float measuredDuty = motor.HlfbPercent();
-                            float error = torqueTargetPercent - measuredDuty;
-                            if (SerialPort) {
-                                SerialPort.Send("Torque target: ");
-                                SerialPort.Send(torqueTargetPercent, 2);
-                                SerialPort.SendLine("%");
-                            }
-                            // RPM COMMAND UPDATE (ERROR SIGN REVERSED)
-                            // Negative error -> increase RPM, positive error -> decrease RPM.
+                            float *rpmCommand = nullptr;
+                            const char *label = nullptr;
                             if (buttonFullmovState == BUTTONFULLMOV_RUNNING) {
-                                buttonFullmovRpmCommand +=
-                                    (-error) * torqueRegGainRpmPerPercent;
-                                if (buttonFullmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonFullmovRpmCommand < torqueRegMinRpm) {
-                                    buttonFullmovRpmCommand = torqueRegMinRpm;
-                                }
-                                motor.MoveVelocity(
-                                    -RpmToPulsesPerSec(
-                                        static_cast<int32_t>(buttonFullmovRpmCommand)));
-                                if (SerialPort) {
-                                    SerialPort.Send("Buttonfullmov RPM cmd: ");
-                                    SerialPort.SendLine(
-                                        static_cast<int32_t>(buttonFullmovRpmCommand));
+                                rpmCommand = &buttonFullmovRpmCommand;
+                                label = "Buttonfullmov RPM cmd: ";
+                            } else {
+                                rpmCommand = &buttonHalfmovRpmCommand;
+                                label = "ButtonHalfmov RPM cmd: ";
+                            }
+
+                            uint32_t nowMs = Milliseconds();
+                            float dtSec = static_cast<float>(nowMs - hlfbLastUpdateMs) / 1000.0f;
+                            if (dtSec <= 0.0f) {
+                                dtSec = 0.001f;
+                            }
+                            hlfbLastUpdateMs = nowMs;
+
+                            float measuredDuty = motor.HlfbPercent();
+                            float error = hlfbPidTargetPercent - measuredDuty;
+                            if (fabsf(error) <= hlfbErrorDeadbandPercent) {
+                                error = 0.0f;
+                            }
+
+                            bool nearMinRpm = *rpmCommand <= (torqueRegMinRpm + 0.1f);
+                            bool nearMaxRpm = *rpmCommand >= (torqueRegMaxRpm - 0.1f);
+                            bool pushingFurtherIntoLimit =
+                                (nearMinRpm && error > 0.0f) ||
+                                (nearMaxRpm && error < 0.0f);
+
+                            if (!pushingFurtherIntoLimit) {
+                                hlfbIntegral += error * dtSec;
+                                if (hlfbIntegral > hlfbIntegralMax) {
+                                    hlfbIntegral = hlfbIntegralMax;
+                                } else if (hlfbIntegral < hlfbIntegralMin) {
+                                    hlfbIntegral = hlfbIntegralMin;
                                 }
                             } else {
-                                buttonHalfmovRpmCommand +=
-                                    (-error) * torqueRegGainRpmPerPercent;
-                                if (buttonHalfmovRpmCommand > torqueRegMaxRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMaxRpm;
-                                } else if (buttonHalfmovRpmCommand < torqueRegMinRpm) {
-                                    buttonHalfmovRpmCommand = torqueRegMinRpm;
+                                hlfbIntegral *= 0.95f;
+                            }
+
+                            float a11AssistRpm = 0.0f;
+                            if (proxAvgReady && hlfbA11AssistValid) {
+                                float a11DropHz = hlfbPrevProxHzAvg - proxHzAvg;
+                                float hlfbLoadIncrease =
+                                    hlfbPrevMeasuredDuty - measuredDuty;
+                                if (a11DropHz > hlfbA11AssistDropDeadbandHz &&
+                                    hlfbLoadIncrease > hlfbA11AssistLoadDeadbandPercent) {
+                                    a11AssistRpm =
+                                        a11DropHz * hlfbA11AssistGainRpmPerHz;
+                                    if (a11AssistRpm > hlfbA11AssistMaxRpm) {
+                                        a11AssistRpm = hlfbA11AssistMaxRpm;
+                                    }
                                 }
-                                motor.MoveVelocity(
-                                    -RpmToPulsesPerSec(
-                                        static_cast<int32_t>(buttonHalfmovRpmCommand)));
-                                if (SerialPort) {
-                                    SerialPort.Send("ButtonHalfmov RPM cmd: ");
-                                    SerialPort.SendLine(
-                                        static_cast<int32_t>(buttonHalfmovRpmCommand));
-                                }
+                            }
+                            hlfbPrevMeasuredDuty = measuredDuty;
+                            if (proxAvgReady) {
+                                hlfbPrevProxHzAvg = proxHzAvg;
+                                hlfbA11AssistValid = true;
+                            }
+
+                            float derivative = (error - hlfbPrevError) / dtSec;
+                            float rpmDelta = (hlfbPidKp * error) +
+                                             (hlfbPidKi * hlfbIntegral) +
+                                             (hlfbPidKd * derivative) +
+                                             a11AssistRpm;
+                            if (a11AssistRpm > 0.0f && rpmDelta < a11AssistRpm) {
+                                rpmDelta = a11AssistRpm;
+                            }
+                            hlfbPrevError = error;
+                            *rpmCommand -= rpmDelta;
+
+                            if (*rpmCommand > torqueRegMaxRpm) {
+                                *rpmCommand = torqueRegMaxRpm;
+                            } else if (*rpmCommand < torqueRegMinRpm) {
+                                *rpmCommand = torqueRegMinRpm;
+                            }
+
+                            motor.MoveVelocity(
+                                -RpmToPulsesPerSec(
+                                    static_cast<int32_t>(*rpmCommand)));
+                            if (SerialPort) {
+                                SerialPort.Send("HLFB target: ");
+                                SerialPort.Send(hlfbPidTargetPercent, 2);
+                                SerialPort.Send("% measured: ");
+                                SerialPort.Send(measuredDuty, 2);
+                                SerialPort.Send("% A11 assist RPM: ");
+                                SerialPort.Send(a11AssistRpm, 2);
+                                SerialPort.Send(" ");
+                                SerialPort.Send(label);
+                                SerialPort.SendLine(static_cast<int32_t>(*rpmCommand));
                             }
                         }
                     }
