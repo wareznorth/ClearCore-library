@@ -51,7 +51,7 @@
 #define jogRpm 400
 
 // Runtime switch: true uses A-11 Hz for speed adjustment; false uses HLFB.
-bool useA11HzControl = true;
+bool useA11HzControl = false;
 
 // Proximity measurement via rising-edge interrupt on A-11.
 volatile uint32_t proxLastRiseUs = 0;
@@ -68,7 +68,7 @@ static void ProximityRiseCallback();
 
 // Buttonfullmov parameters.
 #define buttonFullmovRpm 220
-#define buttonFullmovCounts 256000
+#define buttonFullmovCounts 254000
 
 // ButtonHalfmov parameters.
 #define buttonHalfmovRpm 220
@@ -91,17 +91,17 @@ static void ProximityRiseCallback();
 #define a11SetpointBlendAtMin 0.36f
 
 // HLFB PID parameters (Button moves only when useA11HzControl is false).
-#define hlfbPidTargetPercent -11.0f
-#define hlfbPidKp 1.20f
-#define hlfbPidKi 0.08f
-#define hlfbPidKd 0.02f
+#define hlfbPidTargetPercent -3.5f
+#define hlfbPidKp 3.85f
+#define hlfbPidKi 0.38f
+#define hlfbPidKd 0.09f
 #define hlfbIntegralMin -80.0f
-#define hlfbIntegralMax 80.0f
-#define hlfbErrorDeadbandPercent 0.5f
-#define hlfbA11AssistDropDeadbandHz 0.25f
-#define hlfbA11AssistLoadDeadbandPercent 0.25f
-#define hlfbA11AssistGainRpmPerHz 0.50f
-#define hlfbA11AssistMaxRpm 5.0f
+#define hlfbIntegralMax 320.0f
+#define hlfbErrorDeadbandPercent 0.12f
+#define hlfbA11AssistDropDeadbandHz 0.04f
+#define hlfbA11AssistLoadDeadbandPercent 0.04f
+#define hlfbA11AssistGainRpmPerHz 4.75f
+#define hlfbA11AssistMaxRpm 115.0f
 
 
 // Debounce helper for a digital input.
